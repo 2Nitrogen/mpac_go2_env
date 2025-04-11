@@ -294,22 +294,6 @@ void execute(const StateVec &q_in,
   gait_state_machine(data.t, q, c_s, data.swing_legs, data.foot_pos_init);
   StateVec qd_des = compute_body_qd_des(q, args);
   StateVec q_des = compute_body_q_des(q, qd_des, args);
-  // """
-  // ADD NOISE
-  // """
-  std::array<double, 12> noise_means={0.0};
-  double sigma = 0.1;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::cout << "q_des(before) : " << q_des << std::endl;
-  for (size_t i=6; i<NUM_Q; ++i) {
-    std::normal_distribution<> dist(noise_means[i-6], sigma);
-    double noise = dist(gen);
-    // std::cout << "i: " << i << std::endl;
-    // std::cout << "noise: " << noise << std::endl;
-    q_des[i] += noise;
-  }
-  std::cout << "q_des(after) : " << q_des << std::endl;
   StateVec qdd_des = compute_body_qdd_des(q, qd, q_des, qd_des);
 
   for (int i = 0; i < NUM_C; ++i) {
@@ -602,6 +586,8 @@ StateVec update_qd_filter(const StateVec &qd) {
   return qd_filtered;
 }
 
+bool add_noise = true;
+
 void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, const StateVec &q, const StateVec &qd, const InputVec &u_sol, const StateVec &qdd_sol) {
   if (feasible) {
     double gamma = 0.5;
@@ -611,6 +597,25 @@ void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, cons
       act_cmds.u[i] = u_sol[i];
       act_cmds.qd[i] = qd_fuse[i] + CTRL_LOOP_DURATION*(qdd_sol[i+Q_FL1]);
       act_cmds.q[i] = q[i+Q_FL1] + CTRL_LOOP_DURATION*qd_fuse[i]+0.5*CTRL_LOOP_DURATION*CTRL_LOOP_DURATION*(qdd_sol[i+Q_FL1]);
+      if (add_noise) {
+        // """
+        // ADD NOISE
+        // """
+        std::cout << "act_cmds.q(before) : " << act_cmds.q << std::endl;
+        // std::cout << "act_cmds.q type : " << typeid(act_cmds.q[0]).name() << std::endl;
+        std::array<double, 12> noise_means={0.0};
+        double sigma = 0.01;
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        for (size_t j=0; j<NUM_U; ++j) {
+          std::normal_distribution<> dist(noise_means[j], sigma);
+          double noise = dist(gen);
+          // std::cout << "j: " << j << std::endl;
+          // std::cout << "noise: " << noise << std::endl;
+          act_cmds.q[j] += noise;
+        }
+        std::cout << "act_cmds.q(after) : " << act_cmds.q << std::endl;
+      }
       act_cmds.kp[i] = 200;
       act_cmds.kd[i] = 5;
     }
