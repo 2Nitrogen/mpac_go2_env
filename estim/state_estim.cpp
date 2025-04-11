@@ -9,6 +9,8 @@
 
 extern Robot robot;
 
+
+
 void state_estim_init(StateEstimator &estim) {
   estim.qd_prev = VectorXd::Zero((int)NUM_Q);
   memset(&estim.foot_force_filt, 0, 4*sizeof(double));

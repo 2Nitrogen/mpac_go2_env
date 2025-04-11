@@ -1,6 +1,8 @@
 #include "robot.h"
 #include <eigen3/Eigen/Dense>
 #include <iostream>
+#include <random>
+#include <array>
 
 #include "osqp.h"
 #include "OsqpEigen/OsqpEigen.h"
@@ -292,10 +294,24 @@ void execute(const StateVec &q_in,
   gait_state_machine(data.t, q, c_s, data.swing_legs, data.foot_pos_init);
   StateVec qd_des = compute_body_qd_des(q, args);
   StateVec q_des = compute_body_q_des(q, qd_des, args);
+  // """
+  // ADD NOISE
+  // """
+  std::array<double, 12> noise_means={0.0};
+  double sigma = 0.1;
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::cout << "q_des(before) : " << q_des << std::endl;
+  for (size_t i=6; i<NUM_Q; ++i) {
+    std::normal_distribution<> dist(noise_means[i-6], sigma);
+    double noise = dist(gen);
+    // std::cout << "i: " << i << std::endl;
+    // std::cout << "noise: " << noise << std::endl;
+    q_des[i] += noise;
+  }
+  std::cout << "q_des(after) : " << q_des << std::endl;
   StateVec qdd_des = compute_body_qdd_des(q, qd, q_des, qd_des);
-  """
-  ADD NOISE
-  """
+
   for (int i = 0; i < NUM_C; ++i) {
     walk_tlm.swing_leg[i] = data.swing_legs[i];
     if (data.swing_legs[i]) {
