@@ -116,7 +116,8 @@ void state_estim(StateEstimator &estim, const OutputVec &y, StateVec &q, StateVe
      really need a localization without drift (e.g. perception, mocap) when operating on terrain */
   //double relative_z = 0;
   //bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
-  double terrain_z = 0.01;
+  // double terrain_z = 0.01;
+  double terrain_z = 0.0;
   bool terrain_z_valid = contact_feet_terrain_z(q, c_s, terrain_z);
   // std::cout<<"contact: " << terrain_z_valid <<std::endl;
 

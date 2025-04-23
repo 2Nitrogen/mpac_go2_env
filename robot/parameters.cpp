@@ -87,7 +87,6 @@ void robot_params_init(Robot &r) {
   r.contacts[C_FR_EE] = (RobotContact) {F_FR_EE, "C_FR_EE", 20000, 1000,  0.7, 0,0,0};
   r.contacts[C_BL_EE] = (RobotContact) {F_BL_EE, "C_BL_EE", 20000, 1000,  0.7, 0,0,0};
   r.contacts[C_BR_EE] = (RobotContact) {F_BR_EE, "C_BR_EE", 20000, 1000,  0.7, 0,0,0};
-  
 }
 
 void robot_state_init(Robot &robot) {

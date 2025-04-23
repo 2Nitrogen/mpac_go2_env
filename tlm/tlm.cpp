@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
+#include <zmq.hpp>
 
 #include "robot.h"
 #include "tlm.h"

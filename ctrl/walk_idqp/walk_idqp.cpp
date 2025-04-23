@@ -7,7 +7,7 @@
 #include "osqp.h"
 #include "OsqpEigen/OsqpEigen.h"
 #include <eigen3/Eigen/Dense>
-
+#include <cmath>
 #include "math_utils.h"
 #include "ctrl_core.h"
 #include "full_model_fd.h"
@@ -35,14 +35,23 @@ static const int num_constraints =   NUM_U /*input constraints*/
                                    + 4*4+4 /*admissable force constraints*/;
                                    //+ NUM_U /*qdd-qdd_des for swing legs */;
 static const int qd_buff_size = 100;
-const double step_height = 0.075;//0.3
-// const double step_time = 0.25;//0.3
-const double step_time = 0.25;//0.3
+
+// const double step_height = 0.075;//0.3
+// const double step_time = 0.25; //0.3
+// const double dwell_time = 0.05;
+
+const double step_height = 0.075;
+const double step_time = 0.25;
 const double dwell_time = 0.05;
+
 // const double qdd_des_limit[3] = {1.2, 0.8, 2};
-const double qdd_des_limit[3] = {5, 0.8, 2};
 // const double qd_des_limit[3] = {0.3, 0.2, 0.5};
-const double qd_des_limit[3] = {0.5, 0.2, 0.5};
+
+// const double qdd_des_limit[3] = {5, 0.8, 2};
+// const double qd_des_limit[3] = {0.5, 0.2, 0.5};
+
+const double qdd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
+const double qd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
 //double params[] = {50,50,500,200,200,400};
 //double params[] = {0,0,300,300,300,400,
 //                   25,25,35,15,15,35};
@@ -282,6 +291,7 @@ void execute(const StateVec &q_in,
   double relative_z = 0;
   bool relative_z_valid = contact_feet_relative_z(q_in, c_s, relative_z);
   StateVec q = q_in;
+  StateVec q_dot = qd;
   q[Q_Z] = relative_z;
 
   /* reset tlm */
@@ -311,6 +321,56 @@ void execute(const StateVec &q_in,
   bool feasible = solve_idqp(data, q, qd, c_s, qdd_des, u_sol, qdd_sol);
   // std::cout<<"Feasibility: "<< feasible <<std::endl;
   fill_act_cmds(data, act_cmds, feasible, q, qd, u_sol, qdd_sol);
+
+  // Fill out Global foot position data
+  double foot_pos_FL[3];
+  double foot_pos_FR[3];
+  double foot_pos_RL[3];
+  double foot_pos_RR[3];
+
+  fk(q, foot_pos_FL, robot.contacts[0].frame); //"C_FL_EE"
+  fk(q, foot_pos_FR, robot.contacts[1].frame); //"C_FR_EE"
+  fk(q, foot_pos_RL, robot.contacts[2].frame); //"C_RL_EE"
+  fk(q, foot_pos_RR, robot.contacts[3].frame); //"C_RR_EE"
+
+
+  walk_tlm.feet_pos[0] = foot_pos_FL[0];
+  walk_tlm.feet_pos[1] = foot_pos_FL[1];
+  walk_tlm.feet_pos[2] = foot_pos_FL[2];
+  // std::cout<<"FL_x: "<< foot_pos_FL[0] <<std::endl;
+  // std::cout<<"tlm_FL_x: "<< walk_tlm.swing_feet_err[0] <<std::endl;
+  
+  walk_tlm.feet_pos[3] = foot_pos_FR[0];
+  walk_tlm.feet_pos[4] = foot_pos_FR[1];
+  walk_tlm.feet_pos[5] = foot_pos_FR[2];
+  
+  walk_tlm.feet_pos[6] = foot_pos_RL[0];
+  walk_tlm.feet_pos[7] = foot_pos_RL[1];
+  walk_tlm.feet_pos[8] = foot_pos_RL[2];
+  
+  walk_tlm.feet_pos[9] = foot_pos_RR[0];
+  walk_tlm.feet_pos[10] = foot_pos_RR[1];
+  walk_tlm.feet_pos[11] = foot_pos_RR[2];
+
+  // Fill out Global foot velocity data  
+  walk_tlm.feet_vel[0] = (fk_jac(q, robot.contacts[0].frame)*q_dot)[0];
+  walk_tlm.feet_vel[1] = (fk_jac(q, robot.contacts[0].frame)*q_dot)[1];
+  walk_tlm.feet_vel[2] = (fk_jac(q, robot.contacts[0].frame)*q_dot)[2];
+  // std::cout<<"FL_vx: "<< walk_tlm.feet_vel[0] <<std::endl;
+  // std::cout<<"tlm_FL_vx: "<< walk_tlm.feet_vel[0] <<std::endl;
+
+  walk_tlm.feet_vel[3] = (fk_jac(q, robot.contacts[1].frame)*q_dot)[0];
+  walk_tlm.feet_vel[4] = (fk_jac(q, robot.contacts[1].frame)*q_dot)[1];
+  walk_tlm.feet_vel[5] = (fk_jac(q, robot.contacts[1].frame)*q_dot)[2];
+
+  walk_tlm.feet_vel[6] = (fk_jac(q, robot.contacts[2].frame)*q_dot)[0];
+  walk_tlm.feet_vel[7] = (fk_jac(q, robot.contacts[2].frame)*q_dot)[1];
+  walk_tlm.feet_vel[8] = (fk_jac(q, robot.contacts[2].frame)*q_dot)[2];
+
+  walk_tlm.feet_vel[9] = (fk_jac(q, robot.contacts[3].frame)*q_dot)[0];
+  walk_tlm.feet_vel[10] = (fk_jac(q, robot.contacts[3].frame)*q_dot)[1];
+  walk_tlm.feet_vel[11] = (fk_jac(q, robot.contacts[3].frame)*q_dot)[2];
+
 }
 
 bool has_tlm() {return true;};
@@ -336,6 +396,8 @@ void create_attributes_type(hid_t &attr_type) {
   attr_type = H5Tcreate (H5T_COMPOUND, sizeof (TelemetryAttributes));
   H5Tinsert(attr_type, "swing_leg", HOFFSET (TelemetryAttributes, swing_leg), foot_num_vec);
   H5Tinsert(attr_type, "swing_feet_err", HOFFSET (TelemetryAttributes, swing_feet_err), foot_pos_vec);
+  H5Tinsert(attr_type, "feet_pos", HOFFSET (TelemetryAttributes, feet_pos), foot_pos_vec);
+  H5Tinsert(attr_type, "feet_vel", HOFFSET (TelemetryAttributes, feet_vel), foot_pos_vec);
 };
 
 
@@ -351,9 +413,14 @@ void fill_attributes(std::vector<TelemetryAttribute> &attributes) {
     sprintf(attr.swing_leg[i].name, "swing_%s", &robot.contacts[i].name[2]);
   }
   for (int i = 0; i < 4; ++i) {
-    sprintf(attr.swing_feet_err[3*i].name, "swing_%s_err_x", &robot.contacts[i].name[2]);
-    sprintf(attr.swing_feet_err[3*i+1].name, "swing_%s_err_y", &robot.contacts[i].name[2]);
-    sprintf(attr.swing_feet_err[3*i+2].name, "swing_%s_err_z", &robot.contacts[i].name[2]);
+    sprintf(attr.feet_pos[3*i].name, "%s_pos_x", &robot.contacts[i].name[2]);
+    sprintf(attr.feet_pos[3*i+1].name, "%s_pos_y", &robot.contacts[i].name[2]);
+    sprintf(attr.feet_pos[3*i+2].name, "%s_pos_z", &robot.contacts[i].name[2]);
+  }
+  for (int i = 0; i < 4; ++i) {
+    sprintf(attr.feet_vel[3*i].name, "%s_vel_x", &robot.contacts[i].name[2]);
+    sprintf(attr.feet_vel[3*i+1].name, "%s_vel_y", &robot.contacts[i].name[2]);
+    sprintf(attr.feet_vel[3*i+2].name, "%s_vel_z", &robot.contacts[i].name[2]);
   }
   for (int i = 0; i < 12; ++i) {
     strcpy(attr.swing_feet_err[i].units, "m");
@@ -379,6 +446,8 @@ void create_timeseries_type(hid_t &timeseries_type) {
   timeseries_type = H5Tcreate (H5T_COMPOUND, sizeof (WalkIdqpTelemetry));
   H5Tinsert(timeseries_type, "swing_leg", HOFFSET (WalkIdqpTelemetry, swing_leg), foot_num_vec);
   H5Tinsert(timeseries_type, "swing_feet_err", HOFFSET (WalkIdqpTelemetry, swing_feet_err), foot_pos_vec);
+  H5Tinsert(timeseries_type, "feet_pos", HOFFSET (WalkIdqpTelemetry, feet_pos), foot_pos_vec);
+  H5Tinsert(timeseries_type, "feet_vel", HOFFSET (WalkIdqpTelemetry, feet_vel), foot_pos_vec);
 };
 /* Note for softstop, we always want to be able to transition in case of emergency */
 void setpoint(const StateVec &q_in,
@@ -586,7 +655,7 @@ StateVec update_qd_filter(const StateVec &qd) {
   return qd_filtered;
 }
 
-bool add_noise = true;
+bool add_noise = false;
 
 void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, const StateVec &q, const StateVec &qd, const InputVec &u_sol, const StateVec &qdd_sol) {
   if (feasible) {
@@ -742,6 +811,9 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
   double swing_2 = step_time + 2*dwell_time <= t_phase && t_phase < 2*step_time + 2*dwell_time;
   double early_contact_2 = step_time + 2*dwell_time + step_time/2 <= t_phase && t_phase < 2*step_time + 2*dwell_time;
 
+  // std::cout << "q: " << std::endl << q << std::endl;
+  // std::cout << "q.dtype: " << std::endl << typeid(q).name() << std::endl;
+
   if (dwell_1 || dwell_2) {
     for (int i = 0; i < 4; ++i) {
       fk(q, foot_pos_init[i], (Frame)(i+F_FL_EE));
@@ -819,9 +891,33 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   //neutral_pos[0] += 0.012731/2;
   //neutral_pos[1] += 0.002186/2;
   
-  goal_pos[0] = neutral_pos[0]+x_delta;
-  goal_pos[1] = neutral_pos[1]+y_delta;
-  goal_pos[2] = neutral_pos[2];
+  bool Add_foot_pos_noise = false;
+
+  double sigma = 0.1;
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::normal_distribution<> dist(0, sigma);
+
+  if ( Add_foot_pos_noise ) {
+
+    double dx = dist(gen);
+    double dy = dist(gen);
+    double dz = dist(gen);
+    std::cout << "dx : " << dx << std::endl;
+    std::cout << "dy : " << dy << std::endl;
+    std::cout << "dz : " << dz << std::endl;
+
+    goal_pos[0] = neutral_pos[0] + x_delta + dx;
+    goal_pos[1] = neutral_pos[1] + y_delta + dy;
+    goal_pos[2] = neutral_pos[2] + dz;
+  }
+  else {
+    goal_pos[0] = neutral_pos[0] + x_delta;
+    goal_pos[1] = neutral_pos[1] + y_delta;
+    goal_pos[2] = neutral_pos[2];
+  }
+
+  // std::cout << "goal_pos : " << goal_pos << std::endl;
   
   traj_gen::CubicPoly swing_traj[3];
   
@@ -850,11 +946,11 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
                                    foot_acc_des[2]);
   }
 
-  double foot_pos[3];
-  fk(q, foot_pos, robot.contacts[foot].frame);
-  for (int i = 0; i < 3; ++i) {
-    walk_tlm.swing_feet_err[3*foot+i] = foot_pos[i] - foot_pos_des[i];
-  }
+  // double foot_pos[3];
+  // fk(q, foot_pos, robot.contacts[foot].frame);
+  // for (int i = 0; i < 3; ++i) {
+  //   walk_tlm.swing_feet_err[3*foot+i] = foot_pos[i]; // - foot_pos_des[i];
+  // }
   
   ik(robot.contacts[foot].frame, q, foot_pos_des, data.swing_leg_q_des[foot]);
 
