@@ -210,7 +210,7 @@ bool contact_feet_terrain_z(const StateVec &q, const ContactState c_s, double &t
   // std::cout << "number of contact foot: " << contact_feet << std::endl;
   if (contact_feet != 0) {
     terrain_z = -z_sum/contact_feet;
-    std::cout << "Terrain z: " << terrain_z << std::endl;
+    // std::cout << "Terrain z: " << terrain_z << std::endl;
     return true;
   } else {
     terrain_z = 0;

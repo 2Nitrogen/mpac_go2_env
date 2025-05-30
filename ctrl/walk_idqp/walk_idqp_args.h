@@ -13,6 +13,9 @@ enum {
   ARG_VY,
   ARG_VRZ,
   ARG_MU,
+  ARG_T_STEP,
+  ARG_H_STEP,
+  ARG_T_DWELL,
   NUM_CONT_ARGS
 };
 

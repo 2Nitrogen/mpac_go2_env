@@ -154,7 +154,7 @@ void init(const StateVec &q_in,
       data.swing_legs[i]=false;
     }
 
-    nearest_phasing(data, q, qd, c_s, data.foot_pos_init);
+    nearest_phasing(data, q, qd, c_s, data.foot_pos_init, args);
     data.i_err[0] = 0;
     data.i_err[1] = 0;
 
@@ -329,7 +329,7 @@ void execute(const StateVec &q_in,
   }
   data.t += CTRL_LOOP_DURATION;
   StateVec qd_filtered = update_qd_filter(qd);
-  gait_state_machine(data.t, q, c_s, data.swing_legs, data.foot_pos_init);
+  gait_state_machine(data.t, q, c_s, data.swing_legs, data.foot_pos_init, args);
   StateVec qd_des = compute_body_qd_des(q, args);
   StateVec q_des = compute_body_q_des(q, qd_des, args);
   StateVec qdd_des = compute_body_qdd_des(q, qd, q_des, qd_des);
@@ -338,7 +338,7 @@ void execute(const StateVec &q_in,
     walk_tlm.swing_leg[i] = data.swing_legs[i];
     if (data.swing_legs[i]) {
       //TODO inconsistent w.r.t. variables in data vs local to execute
-      compute_swing_leg_joint_des(data, (Contact)i, q, qd, qd_filtered, qd_des);
+      compute_swing_leg_joint_des(data, (Contact)i, q, qd, qd_filtered, qd_des, args);
       qdd_des[6+3*i] = data.swing_leg_qdd_des[i][0];
       qdd_des[6+3*i+1] = data.swing_leg_qdd_des[i][1];
       qdd_des[6+3*i+2] = data.swing_leg_qdd_des[i][2];
@@ -500,7 +500,7 @@ void setpoint(const StateVec &q_in,
 
   q_des = q;
   qd_des = VectorXd::Zero((int)NUM_Q);
-  q_des[Q_Z] = args.cont[ARG_H];
+  q_des[Q_Z] = args.cont[ARG_H]+relative_z;
   q_des[Q_RX] = 0;
   q_des[Q_RY] = 0;
   qd_des[Q_X] = args.cont[ARG_VX]*cos(q[Q_RZ]) - args.cont[ARG_VY]*sin(q[Q_RZ]);
@@ -548,13 +548,13 @@ bool in_sroa_underestimate(const StateVec &q,
   double relative_z = 0;
   bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
 
-  // if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
-  //     fabs(qd[Q_Z]) < 0.5) { //&&
-  //     //fabs(z_ang) < 0.05) {
-  //   return true;
-  // }
-  //   return false;
-  return true;
+  if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
+      fabs(qd[Q_Z]) < 0.5) { //&&
+      //fabs(z_ang) < 0.05) {
+    return true;
+  }
+  return false;
+  // return true;
 }
 
 bool in_sroa_overestimate(const StateVec &q,
@@ -579,14 +579,14 @@ bool in_sroa_overestimate(const StateVec &q,
   double relative_z = 0;
   bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
 
-  // if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
-  //     fabs(qd[Q_Z]) < 0.5) { //&&
-  //     //fabs(z_ang) < 0.05) {
-  //   return true;
-  // }
-  // return false;
+  if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
+      fabs(qd[Q_Z]) < 0.5) { //&&
+      //fabs(z_ang) < 0.05) {
+    return true;
+  }
+  return false;
 
-  return true;
+  // return true;
 }
 
 bool in_safe_set(const StateVec &q,
@@ -615,6 +615,7 @@ StateVec compute_body_q_des(const StateVec &q,
                             const Args &args) {
   StateVec q_des = VectorXd::Zero(NUM_Q);
   q_des[Q_Z] = args.cont[ARG_H];
+  // q_des[Q_Z] = q[Q_Z]+0.25;
   q_des[Q_X] = CTRL_LOOP_DURATION*qd_des[Q_X] + data.q_des_prev[Q_X];
   q_des[Q_Y] = CTRL_LOOP_DURATION*qd_des[Q_Y] + data.q_des_prev[Q_Y];
   q_des[Q_RZ] = CTRL_LOOP_DURATION*qd_des[Q_RZ] + data.q_des_prev[Q_RZ];
@@ -881,18 +882,21 @@ bool solve_idqp(Data &data, const StateVec &q, const StateVec &qd, const Contact
   return success;
 }
 
-void gait_state_machine(double t, const StateVec &q, const ContactState c_s, bool swing_legs[4], double foot_pos_init[4][3]) {
-  double duration = 2*(dwell_time+step_time);
+void gait_state_machine(double t, const StateVec &q, const ContactState c_s, bool swing_legs[4], double foot_pos_init[4][3], const Args &args) {
+  double duration = 2*(args.cont[ARG_T_DWELL]+args.cont[ARG_T_STEP]);
   double t_phase = fmod(t,duration);
-  double dwell_1 = t_phase < dwell_time;
-  double swing_1 = dwell_time <= t_phase && t_phase < step_time + dwell_time;
-  double early_contact_1 = dwell_time + step_time/2 <= t_phase && t_phase < step_time + dwell_time;
-  double dwell_2 = step_time + dwell_time <= t_phase && t_phase < step_time + 2*dwell_time;
-  double swing_2 = step_time + 2*dwell_time <= t_phase && t_phase < 2*step_time + 2*dwell_time;
-  double early_contact_2 = step_time + 2*dwell_time + step_time/2 <= t_phase && t_phase < 2*step_time + 2*dwell_time;
+  double dwell_1 = t_phase < args.cont[ARG_T_DWELL];
+  double swing_1 = args.cont[ARG_T_DWELL] <= t_phase && t_phase < args.cont[ARG_T_STEP] + args.cont[ARG_T_DWELL];
+  double early_contact_1 = args.cont[ARG_T_DWELL] + args.cont[ARG_T_STEP]/2 <= t_phase && t_phase < args.cont[ARG_T_STEP] + args.cont[ARG_T_DWELL];
+  double dwell_2 = args.cont[ARG_T_STEP] + args.cont[ARG_T_DWELL] <= t_phase && t_phase < args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL];
+  double swing_2 = args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL] <= t_phase && t_phase < 2*args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL];
+  double early_contact_2 = args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL] + args.cont[ARG_T_STEP]/2 <= t_phase && t_phase < 2*args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL];
 
   // std::cout << "q: " << std::endl << q << std::endl;
   // std::cout << "q.dtype: " << std::endl << typeid(q).name() << std::endl;
+  std::cout << "args_step time: " << std::endl << args.cont[ARG_T_STEP] << std::endl;
+  std::cout << "args_step height: " << std::endl << args.cont[ARG_H_STEP] << std::endl;
+  std::cout << "args_dwell time: " << std::endl << args.cont[ARG_T_DWELL] << std::endl;
 
   if (dwell_1 || dwell_2) {
     for (int i = 0; i < 4; ++i) {
@@ -918,7 +922,7 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
   }
 }
 
-void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, const StateVec &qd, const StateVec &qd_filtered, const StateVec &qd_des) {
+void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, const StateVec &qd, const StateVec &qd_filtered, const StateVec &qd_des, const Args &args) {
   double foot_pos_des[3];
   double foot_vel_des[3];
   double foot_acc_des[3];
@@ -939,7 +943,7 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   //TODO this is technically wrong, since t_phase can go negative,
   //but because of the way gait_state_machine works this function 
   //never gets called with such a t. Probably should clean up a bit.
-  double t_phase = 1/step_time*(fmod(data.t, step_time+dwell_time)-dwell_time);
+  double t_phase = 1/args.cont[ARG_T_STEP]*(fmod(data.t, args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])-args.cont[ARG_T_DWELL]);
 
   neutral_pos[2] = 0.075*(1-2*fabs(t_phase-0.5));
 
@@ -947,18 +951,18 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   double r = sqrt((neutral_pos[1]-q[Q_Y])*(neutral_pos[1]-q[Q_Y])+
                   (neutral_pos[0]-q[Q_X])*(neutral_pos[0]-q[Q_X]));
 
-  double rz_delta = 0.5*0.5*(step_time+dwell_time)*(qd_filtered[Q_RZ]+qd_des[Q_RZ]);
+  double rz_delta = 0.5*0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*(qd_filtered[Q_RZ]+qd_des[Q_RZ]);
   double th = rz_delta + neutral_ang;
   double x_delta_from_ang = r*cos(th)+q[Q_X]-neutral_pos[0];
   double y_delta_from_ang = r*sin(th)+q[Q_Y]-neutral_pos[1];
 
   //TODO unclear which heuristic is actually better, they are very similiar numerically
-  double x_delta = 0.5*0.5*(step_time+dwell_time)*(qd_filtered[Q_X]+qd_des[Q_X]);
-  double y_delta = 0.5*0.5*(step_time+dwell_time)*(qd_filtered[Q_Y]+qd_des[Q_Y]);
+  double x_delta = 0.5*0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*(qd_filtered[Q_X]+qd_des[Q_X]);
+  double y_delta = 0.5*0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*(qd_filtered[Q_Y]+qd_des[Q_Y]);
   //TODO be careful with q[Q_Z], really need height above ground plane
-  //double x_delta = 0.5*(step_time+dwell_time)*qd_des[Q_X] +
+  //double x_delta = 0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*qd_des[Q_X] +
   //                 sqrt(q[Q_Z]/9.81)*(qd_filtered[Q_X]-qd_des[Q_X]);
-  //double y_delta = 0.5*(step_time+dwell_time)*qd_des[Q_Y] +
+  //double y_delta = 0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*qd_des[Q_Y] +
   //                 sqrt(q[Q_Z]/9.81)*(qd_filtered[Q_Y]-qd_des[Q_Y]);
 
   //x_delta = fmax(fmin(x_delta,0.1),-0.1);
@@ -1002,25 +1006,25 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   traj_gen::CubicPoly swing_traj[3];
   
   for (int i = 0; i < 2; ++i) {
-    swing_traj[i] = traj_gen::cubic_poly_gen(data.foot_pos_init[foot][i],0,goal_pos[i],0,step_time*0.8);
+    swing_traj[i] = traj_gen::cubic_poly_gen(data.foot_pos_init[foot][i],0,goal_pos[i],0,args.cont[ARG_T_STEP]*0.8);
     traj_gen::cubic_poly_eval_full(swing_traj[i],
-                                   step_time*t_phase,
+                                   args.cont[ARG_T_STEP]*t_phase,
                                    foot_pos_des[i],
                                    foot_vel_des[i],
                                    foot_acc_des[i]);
   }
 
   if (t_phase < 0.5) {
-    swing_traj[2] = traj_gen::cubic_poly_gen(0,0,step_height,0,step_time*0.5);
+    swing_traj[2] = traj_gen::cubic_poly_gen(0,0,args.cont[ARG_H_STEP],0,args.cont[ARG_T_STEP]*0.5);
     traj_gen::cubic_poly_eval_full(swing_traj[2],
-                                   step_time*t_phase,
+                                   args.cont[ARG_T_STEP]*t_phase,
                                    foot_pos_des[2],
                                    foot_vel_des[2],
                                    foot_acc_des[2]);
   } else {
-    swing_traj[2] = traj_gen::cubic_poly_gen(step_height,0,0,0,step_time*0.5);
+    swing_traj[2] = traj_gen::cubic_poly_gen(args.cont[ARG_H_STEP],0,0,0,args.cont[ARG_T_STEP]*0.5);
     traj_gen::cubic_poly_eval_full(swing_traj[2],
-                                   step_time*(t_phase-0.5),
+                                   args.cont[ARG_T_STEP]*(t_phase-0.5),
                                    foot_pos_des[2],
                                    foot_vel_des[2],
                                    foot_acc_des[2]);
@@ -1054,7 +1058,7 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   }
 }
 
-void nearest_phasing(Data &data, const StateVec &q, const StateVec &qd, const ContactState c_s, double foot_pos_init[4][3]) {
+void nearest_phasing(Data &data, const StateVec &q, const StateVec &qd, const ContactState c_s, double foot_pos_init[4][3], const Args &args) {
   double FL_BR_z = 0.5*(foot_pos_init[0][2] + foot_pos_init[3][2]);
   double FR_BL_z = 0.5*(foot_pos_init[1][2] + foot_pos_init[2][2]);
   
@@ -1062,42 +1066,39 @@ void nearest_phasing(Data &data, const StateVec &q, const StateVec &qd, const Co
   double z_vel = 0;
   double z_pos = 0;
 
-  double t = dwell_time;
+  double t = args.cont[ARG_T_DWELL];
   if (fabs(FL_BR_z) > fabs(FR_BL_z)) {
     foot_vel = (fk_jac(q, F_FL_EE) + fk_jac(q, F_BR_EE))*qd;
     z_pos = FL_BR_z;
   } else {
     foot_vel = (fk_jac(q, F_FR_EE) + fk_jac(q, F_BL_EE))*qd;
     z_pos = FR_BL_z;
-    t += step_time+dwell_time;
+    t += args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL];
   }
   z_vel = 0.5*foot_vel[2];
 
   traj_gen::CubicPoly swing_traj;
 
   if (z_vel > 0) {
-    swing_traj = traj_gen::cubic_poly_gen(0,0,step_height,0,step_time*0.5);
+    swing_traj = traj_gen::cubic_poly_gen(0,0,args.cont[ARG_H_STEP],0,args.cont[ARG_T_STEP]*0.5);
   } else {
-    swing_traj = traj_gen::cubic_poly_gen(step_height,0,0,0,step_time*0.5);
-    t += step_time*0.5;
+    swing_traj = traj_gen::cubic_poly_gen(args.cont[ARG_H_STEP],0,0,0,args.cont[ARG_T_STEP]*0.5);
+    t += args.cont[ARG_T_STEP]*0.5;
   }
 
   double min_t=0;
   double min_dist=1e9;
   double z_pos_traj;
   double z_vel_traj;
-  for (double i=0; i<0.5*step_time; i+=0.01) {
+  for (double i=0; i<0.5*args.cont[ARG_T_STEP]; i+=0.01) {
     traj_gen::cubic_poly_eval(swing_traj, i, z_pos_traj, z_vel_traj);
     if (min_dist > fabs(z_pos-z_pos_traj)) {
       min_dist = fabs(z_pos-z_pos_traj);
       min_t = i;
     }
   }
-
   data.t = min_t+t;
-
 }
-
 };
 
 PrimitiveBehavior* create() {
@@ -1106,5 +1107,4 @@ PrimitiveBehavior* create() {
 void destroy(PrimitiveBehavior* prim) {
   delete prim;
 }
-
 }
