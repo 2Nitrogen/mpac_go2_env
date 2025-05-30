@@ -1,7 +1,8 @@
 #ifndef WALK_IDQP_H
 #define WALK_IDQP_H
-
+#pragma once
 #include "ctrl_mode_class.h"
+
 
 namespace walk_idqp {
 

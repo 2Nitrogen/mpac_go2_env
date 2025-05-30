@@ -2,14 +2,18 @@
 #include <time.h>
 #include <math.h>
 #include <zmq.hpp>
+#include <iostream>
 
 #include "robot.h"
 #include "tlm.h"
 #include "ctrl_modes_core.h"
+// #include "ctrl_core.h"
 
 #include "hdf5.h"
+#include "fk.h"
 
 void fill_tlm(Robot &robot, Telemetry *tlm) {
+  
   for (int i = 0; i < NUM_Q; ++i) {
     tlm->q[i] = robot.q[i];
     tlm->qd[i] = robot.qd[i];
@@ -60,6 +64,57 @@ void fill_tlm(Robot &robot, Telemetry *tlm) {
     tlm->prim_path[i] = robot.prim_path.at(i+1).action_from_parent;
   }
 
+  const StateVec q = robot.q;
+  const StateVec q_dot = robot.qd;
+
+  // Fill out Global foot position data
+  double foot_pos_FL[3];
+  double foot_pos_FR[3];
+  double foot_pos_RL[3];
+  double foot_pos_RR[3];
+
+  fk(q, foot_pos_FL, robot.contacts[0].frame); //"C_FL_EE"
+  fk(q, foot_pos_FR, robot.contacts[1].frame); //"C_FR_EE"
+  fk(q, foot_pos_RL, robot.contacts[2].frame); //"C_RL_EE"
+  fk(q, foot_pos_RR, robot.contacts[3].frame); //"C_RR_EE"
+
+  tlm->feet_pos[0] = foot_pos_FL[0];
+  tlm->feet_pos[1] = foot_pos_FL[1];
+  tlm->feet_pos[2] = foot_pos_FL[2];
+  // std::cout<<"FL_x: "<< foot_pos_FL[0] <<std::endl;
+  // std::cout<<"tlm_FL_x: "<< tlm->feet_pos[0] <<std::endl;
+  
+  tlm->feet_pos[3] = foot_pos_FR[0];
+  tlm->feet_pos[4] = foot_pos_FR[1];
+  tlm->feet_pos[5] = foot_pos_FR[2];
+  
+  tlm->feet_pos[6] = foot_pos_RL[0];
+  tlm->feet_pos[7] = foot_pos_RL[1];
+  tlm->feet_pos[8] = foot_pos_RL[2];
+  
+  tlm->feet_pos[9] = foot_pos_RR[0];
+  tlm->feet_pos[10] = foot_pos_RR[1];
+  tlm->feet_pos[11] = foot_pos_RR[2];
+
+  // Fill out Global foot velocity data  
+  tlm->feet_vel[0] = (fk_jac(q, robot.contacts[0].frame)*q_dot)[0];
+  tlm->feet_vel[1] = (fk_jac(q, robot.contacts[0].frame)*q_dot)[1];
+  tlm->feet_vel[2] = (fk_jac(q, robot.contacts[0].frame)*q_dot)[2];
+  // std::cout<<"FL_vx: "<< (fk_jac(q, robot.contacts[0].frame)*q_dot)[0] <<std::endl;
+  // std::cout<<"tlm_FL_vx: "<< tlm->feet_vel[0] <<std::endl;
+
+  tlm->feet_vel[3] = (fk_jac(q, robot.contacts[1].frame)*q_dot)[0];
+  tlm->feet_vel[4] = (fk_jac(q, robot.contacts[1].frame)*q_dot)[1];
+  tlm->feet_vel[5] = (fk_jac(q, robot.contacts[1].frame)*q_dot)[2];
+
+  tlm->feet_vel[6] = (fk_jac(q, robot.contacts[2].frame)*q_dot)[0];
+  tlm->feet_vel[7] = (fk_jac(q, robot.contacts[2].frame)*q_dot)[1];
+  tlm->feet_vel[8] = (fk_jac(q, robot.contacts[2].frame)*q_dot)[2];
+
+  tlm->feet_vel[9] = (fk_jac(q, robot.contacts[3].frame)*q_dot)[0];
+  tlm->feet_vel[10] = (fk_jac(q, robot.contacts[3].frame)*q_dot)[1];
+  tlm->feet_vel[11] = (fk_jac(q, robot.contacts[3].frame)*q_dot)[2];
+
 }
 
 void fill_derived_tlm(DerivedTelemetry *derived_tlm, Telemetry *tlm) {
@@ -98,6 +153,12 @@ void fill_derived_tlm(DerivedTelemetry *derived_tlm, Telemetry *tlm) {
 
   derived_tlm->epoch_time = tlm->cycle_start_time.tv_sec + 1e-9*tlm->cycle_start_time.tv_nsec;
 
+  // Foot Position & Velocity in Global Frame -- data log into 'common timeseries'
+  for (int i = 0; i < 12; ++i) {
+    derived_tlm->feet_pos[i] = tlm->feet_pos[i];
+    derived_tlm->feet_vel[i] = tlm->feet_vel[i]; 
+  }
+
 }
 
 void create_common_timeseries_type(hid_t &timeseries_type) {
@@ -118,6 +179,9 @@ void create_common_timeseries_type(hid_t &timeseries_type) {
   hid_t force_vec = H5Tarray_create(H5T_NATIVE_DOUBLE, 1, dims_force);
   hsize_t dims_path[1] = {8};
   hid_t path_vec = H5Tarray_create(str128, 1, dims_path);
+  hsize_t dims_feet_pos[1] = {12};
+  hid_t foot_pos_vec = H5Tarray_create(H5T_NATIVE_DOUBLE, 1, dims_feet_pos);
+  hid_t foot_vel_vec = H5Tarray_create(H5T_NATIVE_DOUBLE, 1, dims_feet_pos);
 
   timeseries_type = H5Tcreate (H5T_COMPOUND, sizeof (DerivedTelemetry));
   H5Tinsert(timeseries_type, "local_date", HOFFSET (DerivedTelemetry, local_date), str32);
@@ -142,6 +206,9 @@ void create_common_timeseries_type(hid_t &timeseries_type) {
   H5Tinsert(timeseries_type, "ctrl_mode_des", HOFFSET (DerivedTelemetry, ctrl_mode_des), str128);
   H5Tinsert(timeseries_type, "prim_path", HOFFSET (DerivedTelemetry, prim_path), path_vec);
   H5Tinsert(timeseries_type, "prim_tlm_index", HOFFSET (DerivedTelemetry, prim_tlm_index), H5T_NATIVE_ULONG);
+
+  H5Tinsert(timeseries_type, "feet_pos", HOFFSET (DerivedTelemetry, feet_pos), foot_pos_vec);
+  H5Tinsert(timeseries_type, "feet_vel", HOFFSET (DerivedTelemetry, feet_vel), foot_vel_vec);
 
 }
 
@@ -251,6 +318,8 @@ void create_common_attribute_type(hid_t &attr_type) {
   hid_t input_vec = H5Tarray_create(single_attr_type, 1, dims_input);
   hsize_t dims_force[1] = {4};
   hid_t force_vec = H5Tarray_create(single_attr_type, 1, dims_force);
+  hsize_t dims_feet_pos[1] = {12};
+  hid_t foot_pos_vec = H5Tarray_create(single_attr_type, 1, dims_feet_pos);
 
   attr_type = H5Tcreate (H5T_COMPOUND, sizeof (TelemetryAttributes));
   H5Tinsert(attr_type, "epoch_time", HOFFSET (TelemetryAttributes, epoch_time), single_attr_type);
@@ -267,5 +336,6 @@ void create_common_attribute_type(hid_t &attr_type) {
   H5Tinsert(attr_type, "u_des", HOFFSET (TelemetryAttributes, u_des), input_vec);
   H5Tinsert(attr_type, "f", HOFFSET (TelemetryAttributes, f), force_vec);
   H5Tinsert(attr_type, "temp", HOFFSET (TelemetryAttributes, temp), input_vec);
-
+  H5Tinsert(attr_type, "feet_pos", HOFFSET (TelemetryAttributes, feet_pos), foot_pos_vec);
+  H5Tinsert(attr_type, "feet_vel", HOFFSET (TelemetryAttributes, feet_vel), foot_pos_vec);
 }

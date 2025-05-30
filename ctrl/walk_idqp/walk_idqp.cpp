@@ -19,11 +19,13 @@
 #include "ctrl/ctrl_utils/traj_gen.h"
 #include "ctrl_mode_class.h"
 
+
 extern Robot robot;
 
 using namespace Eigen;
 
 namespace walk_idqp {
+
 
 static const int num_vars =   NUM_U /*inputs*/
                             + NUM_Q /*qdd-qdd_des*/
@@ -41,17 +43,19 @@ static const int qd_buff_size = 100;
 // const double dwell_time = 0.05;
 
 const double step_height = 0.075;
+// const double step_time = 0.25;
 const double step_time = 0.25;
 const double dwell_time = 0.05;
 
 // const double qdd_des_limit[3] = {1.2, 0.8, 2};
 // const double qd_des_limit[3] = {0.3, 0.2, 0.5};
 
-// const double qdd_des_limit[3] = {5, 0.8, 2};
-// const double qd_des_limit[3] = {0.5, 0.2, 0.5};
 
 const double qdd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
 const double qd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
+
+
+
 //double params[] = {50,50,500,200,200,400};
 //double params[] = {0,0,300,300,300,400,
 //                   25,25,35,15,15,35};
@@ -102,6 +106,8 @@ typedef struct {
   
   OsqpEigen::Solver solver;
 
+  double mu_arg;
+
 } Data;
 
 class WalkIdqp: public PrimitiveBehavior {
@@ -114,17 +120,22 @@ WalkIdqp() {
   tlm_ptr = (char*) &walk_tlm;
   tlm_size = sizeof walk_tlm;
 }
+
+
 ArgAttributes get_arg_attributes() {
   return (ArgAttributes) {NUM_DISC_ARGS, NUM_CONT_ARGS,
                           disc_min, disc_max,
                           cont_min, cont_max,
                                  0,        0};
 }
+
+
 void init(const StateVec &q_in,
           const StateVec &qd,
           const ContactState c_s,
           const Args &args) {
   //data.t = 0;
+
   
   //this is a hack, but might be a necessary one
   //ideally initialization doesn't depend on the previous 
@@ -235,8 +246,18 @@ void init(const StateVec &q_in,
     /*Admissable Forces*/
     int addmis_force_offset = NUM_U+NUM_Q+3*NUM_C;
     int grf_var_offset = NUM_U+NUM_Q;
+
     for (int i = 0; i < NUM_C; ++i) {
-      double mu = robot.contacts[i].mu;
+
+      // [NOTE]: mu as updated by our model ?!?!
+
+      double mu = robot.contacts[i].mu;  ////////////////////////////////////////////////////////////////////////////////////////////
+      // double mu = args.cont[ARG_MU];
+      // std::cout << "new mu: " << mu << std::endl;
+
+      // [NOTE]: mu as updated by our model ?!?!
+
+
       int fx_constr_l = addmis_force_offset+5*i;
       int fx_constr_u = addmis_force_offset+5*i+1;
       int fy_constr_l = addmis_force_offset+5*i+2;
@@ -281,7 +302,10 @@ void init(const StateVec &q_in,
     data.solver.data()->setUpperBound(data.ub);
     data.solver.initSolver();
   }
+
+  data.mu_arg = args.cont[ARG_MU];
 }
+
 
 void execute(const StateVec &q_in,
              const StateVec &qd,
@@ -293,6 +317,10 @@ void execute(const StateVec &q_in,
   StateVec q = q_in;
   StateVec q_dot = qd;
   q[Q_Z] = relative_z;
+
+
+  std::cout << "relative z: " << relative_z << std::endl;
+
 
   /* reset tlm */
   memset(&walk_tlm, 0, sizeof(WalkIdqpTelemetry));
@@ -322,6 +350,8 @@ void execute(const StateVec &q_in,
   // std::cout<<"Feasibility: "<< feasible <<std::endl;
   fill_act_cmds(data, act_cmds, feasible, q, qd, u_sol, qdd_sol);
 
+
+  // **** Data Export as TLM **** //
   // Fill out Global foot position data
   double foot_pos_FL[3];
   double foot_pos_FR[3];
@@ -518,13 +548,15 @@ bool in_sroa_underestimate(const StateVec &q,
   double relative_z = 0;
   bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
 
-  if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
-      fabs(qd[Q_Z]) < 0.5) { //&&
-      //fabs(z_ang) < 0.05) {
-    return true;
-  }
-    return false;
+  // if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
+  //     fabs(qd[Q_Z]) < 0.5) { //&&
+  //     //fabs(z_ang) < 0.05) {
+  //   return true;
+  // }
+  //   return false;
+  return true;
 }
+
 bool in_sroa_overestimate(const StateVec &q,
                           const StateVec &qd,
                           const ContactState c_s,
@@ -547,13 +579,16 @@ bool in_sroa_overestimate(const StateVec &q,
   double relative_z = 0;
   bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
 
-  if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
-      fabs(qd[Q_Z]) < 0.5) { //&&
-      //fabs(z_ang) < 0.05) {
-    return true;
-  }
-  return false;
+  // if (fabs(relative_z - args.cont[ARG_H]) < 0.05 &&
+  //     fabs(qd[Q_Z]) < 0.5) { //&&
+  //     //fabs(z_ang) < 0.05) {
+  //   return true;
+  // }
+  // return false;
+
+  return true;
 }
+
 bool in_safe_set(const StateVec &q,
                  const StateVec &qd,
                  const ContactState c_s,
@@ -748,6 +783,51 @@ bool solve_idqp(Data &data, const StateVec &q, const StateVec &qd, const Contact
     }
   }
   data.solver.updateHessianMatrix(data.P);
+
+  /*Admissable Forces*/
+  int addmis_force_offset = NUM_U+NUM_Q+3*NUM_C;
+  int grf_var_offset = NUM_U+NUM_Q;
+
+  for (int i = 0; i < NUM_C; ++i) {
+
+    // [NOTE]: mu as updated by our model ?!?!
+
+    // double mu = robot.contacts[i].mu;  ////////////////////////////////////////////////////////////////////////////////////////////
+    double mu = data.mu_arg;
+    // std::cout << "new mu: " << mu << std::endl;
+
+    // [NOTE]: mu as updated by our model ?!?!
+
+
+    int fx_constr_l = addmis_force_offset+5*i;
+    int fx_constr_u = addmis_force_offset+5*i+1;
+    int fy_constr_l = addmis_force_offset+5*i+2;
+    int fy_constr_u = addmis_force_offset+5*i+3;
+    int fz_constr = addmis_force_offset+5*i+4;
+    int fx_var = grf_var_offset+3*i;
+    int fy_var = grf_var_offset+3*i+1;
+    int fz_var = grf_var_offset+3*i+2;
+    // x - mu*z < 0
+    data.A.coeffRef(fx_constr_l, fx_var) = 1;
+    data.A.coeffRef(fx_constr_l, fz_var) = -mu; //mu*z
+
+    // x + mu*z > 0
+    data.A.coeffRef(fx_constr_u, fx_var) = 1;
+    data.A.coeffRef(fx_constr_u, fz_var) = mu; //mu*z
+
+    // y - mu*z < 0
+    data.A.coeffRef(fy_constr_l, fy_var) = 1;
+    data.A.coeffRef(fy_constr_l, fz_var) = -mu; //mu*z
+
+    // y + mu*z > 0
+    data.A.coeffRef(fy_constr_u, fy_var) = 1;
+    data.A.coeffRef(fy_constr_u, fz_var) = mu; //mu*z
+
+    // z > 0
+    data.A.coeffRef(fz_constr, fz_var) = 1;
+
+  }
+
 
   /*Dynamics constraints*/
   /* D*qdd - B*u -J'F = -H */

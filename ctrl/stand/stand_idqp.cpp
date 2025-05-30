@@ -235,7 +235,7 @@ void execute(const StateVec &q,
              const ContactState c_s,
              const Args &args, 
              ActuatorCmds &act_cmds) {
-  std::cout << "q: " << std::endl << q << std::endl;
+  // std::cout << "q: " << std::endl << q << std::endl;
   // std::cout << "q.dtype: " << std::endl << typeid(q).name() << std::endl;
   solve_idqp(act_cmds, q, qd, c_s, args);
 }

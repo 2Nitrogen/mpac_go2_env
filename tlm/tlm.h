@@ -28,6 +28,8 @@ typedef struct {
   CtrlState ctrl_des;
   int prim_path_len;
   CtrlState prim_path[8];
+  double feet_pos[12];
+  double feet_vel[12];
 
 } Telemetry;
 
@@ -42,6 +44,8 @@ typedef struct {
   char ctrl_mode_des[128];
   char prim_path[8][128];
   unsigned long prim_tlm_index;
+  double feet_pos[12];
+  double feet_vel[12];
 
 } DerivedTelemetry;
 
@@ -60,6 +64,8 @@ typedef struct {
   TelemetryAttribute qd_des[NUM_U];
   TelemetryAttribute f[4];
   TelemetryAttribute temp[NUM_U];
+  TelemetryAttribute feet_pos[12];
+  TelemetryAttribute feet_vel[12];
 
 } TelemetryAttributes;
 

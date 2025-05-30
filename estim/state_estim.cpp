@@ -9,8 +9,6 @@
 
 extern Robot robot;
 
-
-
 void state_estim_init(StateEstimator &estim) {
   estim.qd_prev = VectorXd::Zero((int)NUM_Q);
   memset(&estim.foot_force_filt, 0, 4*sizeof(double));
@@ -74,6 +72,7 @@ void state_estim(StateEstimator &estim, const OutputVec &y, StateVec &q, StateVe
     }
   }
 
+
   // body velocity
   VectorXd foot_vel = VectorXd::Zero(3);
   int contact_feet = 0;
@@ -100,7 +99,10 @@ void state_estim(StateEstimator &estim, const OutputVec &y, StateVec &q, StateVe
     } else {
       estim.contact[contact] = false;
     }
-  } 
+  }
+
+
+  // Update qd
   // TODO: instead of conditional, kalman filter?
   if (contact_feet > 0) {
     for (int i = 0; i < 3; ++i) {
@@ -112,26 +114,33 @@ void state_estim(StateEstimator &estim, const OutputVec &y, StateVec &q, StateVe
     qd(Q_Z) = estim.qd_prev(Q_Z) + (y(S_IMU_ACC_Z)-estim.accel_bias[2])*CTRL_LOOP_DURATION;
   }
   
+
+  // Z position of Body
+  
+  /*
   /* using terrain map to determine z height. could cause problems w.r.t. x,y drift
      really need a localization without drift (e.g. perception, mocap) when operating on terrain */
-  //double relative_z = 0;
-  //bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
-  // double terrain_z = 0.01;
+  // double relative_z = 0;
+  // bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
+  // double terrain_z = 0.01; */
+
   double terrain_z = 0.0;
   bool terrain_z_valid = contact_feet_terrain_z(q, c_s, terrain_z);
   // std::cout<<"contact: " << terrain_z_valid <<std::endl;
-
-  if (contact_feet == 0) {
+  if (contact_feet==0) {
     q(Q_Z) += 0.5*(qd(Q_Z)+estim.qd_prev(Q_Z))*CTRL_LOOP_DURATION;
   } else {
     //q(Q_Z) = relative_z + z_sum/contact_feet;
     q(Q_Z) = terrain_z;
   }
 
-  // body x,y. finite integral of velocity for now
+
+  // Body x,y position.
   q(Q_X) += 0.5*(qd(Q_X)+estim.qd_prev(Q_X))*CTRL_LOOP_DURATION;
   q(Q_Y) += 0.5*(qd(Q_Y)+estim.qd_prev(Q_Y))*CTRL_LOOP_DURATION;
 
+
+  // Correct ground truth & Update heading bias
   if (!isnan(y(S_GROUND_TRUTH_X)) &&
       !isnan(y(S_GROUND_TRUTH_Y)) &&
       !isnan(y(S_GROUND_TRUTH_Z)) &&
@@ -146,8 +155,9 @@ void state_estim(StateEstimator &estim, const OutputVec &y, StateVec &q, StateVe
     estim.heading_bias += 0.01*min_angle_diff(y(S_GROUND_TRUTH_RZ), q(Q_RZ));
   }
 
-  estim.qd_prev = qd;
 
+  // Save previous velocities
+  estim.qd_prev = qd;
 }
 
 bool contact_feet_relative_z(const StateVec &q, const ContactState c_s, double &relative_z) {
@@ -177,28 +187,30 @@ bool contact_feet_terrain_z(const StateVec &q, const ContactState c_s, double &t
   double ee_pos[3];
   double z_sum = 0;
   StateVec q_fk = q;
-  q_fk(Q_Z) = 0;
+  q_fk(Q_Z) = 0;  // Set base in floor
   int contact_feet = 0;
   for (int contact = C_FL_EE; contact < C_BR_EE+1; ++contact) {
     if (c_s[contact]){
       fk(q_fk, ee_pos, robot.contacts[contact].frame);
       z_sum += ee_pos[2];
-      contact_feet++;
+      contact_feet++;  // count the total number of foot in contact
     
       Vector3d ee_pos_vec;
-      ee_pos_vec << ee_pos[0], ee_pos[1], ee_pos[2]+q[Q_Z];
+      ee_pos_vec << ee_pos[0], ee_pos[1], ee_pos[2]+q[Q_Z];  // Translate to global frame position
+      // ee_pos_vec << ee_pos[0], ee_pos[1], ee_pos[2];  // 
       Vector3d normal;
       Vector3d contact_pos;
-      terrain_map(ee_pos_vec,
+      bool coll = terrain_map(ee_pos_vec,
                   contact_pos,
                   normal);
-      // std::cout << contact_pos << std::endl;
+      // std::cout << "Collide or not: " << coll << std::endl;
       z_sum -= contact_pos[2];
     }
   }
-
+  // std::cout << "number of contact foot: " << contact_feet << std::endl;
   if (contact_feet != 0) {
     terrain_z = -z_sum/contact_feet;
+    std::cout << "Terrain z: " << terrain_z << std::endl;
     return true;
   } else {
     terrain_z = 0;

@@ -9,6 +9,8 @@ find_package(HDF5 REQUIRED COMPONENTS C CXX)
 find_package(osqp REQUIRED)
 find_package(OsqpEigen REQUIRED)
 find_package(unitree_sdk2 REQUIRED)
+find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
 
 include_directories(mpac_core/robot)
 include_directories(mpac_core/sim)
@@ -47,6 +49,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DROBOT='\"a1\"'")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DPINOCCHIO_URDFDOM_TYPEDEF_SHARED_PTR -DPINOCCHIO_WITH_URDFDOM -DBOOST_MPL_LIMIT_LIST_SIZE=30")
 
+
+
 file(GLOB_RECURSE OBJ_SRC
     "mpac_core/sim/*.cpp"
     "mpac_core/robot/*.cpp"
@@ -70,6 +74,16 @@ file(GLOB CTRL_SRC
 )
 
 add_library(objects OBJECT ${OBJ_SRC})
+target_include_directories(objects
+  PRIVATE
+    ${Python3_INCLUDE_DIRS}
+)
+target_link_libraries(objects
+  PRIVATE
+    pybind11::embed
+    Python3::Python
+)
+
 
 include_directories(io/include)
 set(UNITREE_LIBS -pthread lcm)
@@ -77,7 +91,7 @@ set(UNITREE_LIBS -pthread lcm)
 add_executable(ctrl ${CTRL_SRC})
 # find_library(UNITREE_LIB libunitree_legged_sdk_amd64.so io/lib)
 find_library(PINOCCHIO_LIB libpinocchio_default.so /opt/openrobots/lib/)
-target_link_libraries(ctrl objects urdfdom_model ${PINOCCHIO_LIB} m boost_system ${HDF5_LIBRARIES} OsqpEigen::OsqpEigen ${CMAKE_DL_LIBS} ${ROS_LIBS} unitree_sdk2)
+target_link_libraries(ctrl objects urdfdom_model ${PINOCCHIO_LIB} m boost_system ${HDF5_LIBRARIES} OsqpEigen::OsqpEigen ${CMAKE_DL_LIBS} ${ROS_LIBS} unitree_sdk2 pybind11::embed Python3::Python)
 
 file(GLOB ATNMY_SRC
     "mpac_core/atnmy/*.cpp"
@@ -112,4 +126,3 @@ file(GLOB UNIT_TEST_SRC
 
 add_executable(unit_test ${UNIT_TEST_SRC})
 target_link_libraries(unit_test objects urdfdom_model ${PINOCCHIO_LIB} m boost_system ${UNITREE_LIBS} ${HDF5_LIBRARIES} OsqpEigen::OsqpEigen ${CMAKE_DL_LIBS} ${ROS_LIBS}) #TODO fix this, probably need robot_types.h
-
