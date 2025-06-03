@@ -319,7 +319,7 @@ void execute(const StateVec &q_in,
   q[Q_Z] = relative_z;
 
 
-  std::cout << "relative z: " << relative_z << std::endl;
+  // std::cout << "relative_z: " << relative_z << std::endl;
 
 
   /* reset tlm */
@@ -338,7 +338,7 @@ void execute(const StateVec &q_in,
     walk_tlm.swing_leg[i] = data.swing_legs[i];
     if (data.swing_legs[i]) {
       //TODO inconsistent w.r.t. variables in data vs local to execute
-      compute_swing_leg_joint_des(data, (Contact)i, q, qd, qd_filtered, qd_des, args);
+      compute_swing_leg_joint_des(data, (Contact)i, q, qd, qd_filtered, qd_des, args, c_s);
       qdd_des[6+3*i] = data.swing_leg_qdd_des[i][0];
       qdd_des[6+3*i+1] = data.swing_leg_qdd_des[i][1];
       qdd_des[6+3*i+2] = data.swing_leg_qdd_des[i][2];
@@ -500,7 +500,7 @@ void setpoint(const StateVec &q_in,
 
   q_des = q;
   qd_des = VectorXd::Zero((int)NUM_Q);
-  q_des[Q_Z] = args.cont[ARG_H]+relative_z;
+  q_des[Q_Z] = args.cont[ARG_H];
   q_des[Q_RX] = 0;
   q_des[Q_RY] = 0;
   qd_des[Q_X] = args.cont[ARG_VX]*cos(q[Q_RZ]) - args.cont[ARG_VY]*sin(q[Q_RZ]);
@@ -615,7 +615,6 @@ StateVec compute_body_q_des(const StateVec &q,
                             const Args &args) {
   StateVec q_des = VectorXd::Zero(NUM_Q);
   q_des[Q_Z] = args.cont[ARG_H];
-  // q_des[Q_Z] = q[Q_Z]+0.25;
   q_des[Q_X] = CTRL_LOOP_DURATION*qd_des[Q_X] + data.q_des_prev[Q_X];
   q_des[Q_Y] = CTRL_LOOP_DURATION*qd_des[Q_Y] + data.q_des_prev[Q_Y];
   q_des[Q_RZ] = CTRL_LOOP_DURATION*qd_des[Q_RZ] + data.q_des_prev[Q_RZ];
@@ -894,9 +893,9 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
 
   // std::cout << "q: " << std::endl << q << std::endl;
   // std::cout << "q.dtype: " << std::endl << typeid(q).name() << std::endl;
-  std::cout << "args_step time: " << std::endl << args.cont[ARG_T_STEP] << std::endl;
-  std::cout << "args_step height: " << std::endl << args.cont[ARG_H_STEP] << std::endl;
-  std::cout << "args_dwell time: " << std::endl << args.cont[ARG_T_DWELL] << std::endl;
+  // std::cout << "args_step time: " << std::endl << args.cont[ARG_T_STEP] << std::endl;
+  // std::cout << "args_step height: " << std::endl << args.cont[ARG_H_STEP] << std::endl;
+  // std::cout << "args_dwell time: " << std::endl << args.cont[ARG_T_DWELL] << std::endl;
 
   if (dwell_1 || dwell_2) {
     for (int i = 0; i < 4; ++i) {
@@ -905,6 +904,7 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
     }
   } else if (swing_1) {
     if (early_contact_1) {
+      // std::cout << "early_contact_1_detected";
       swing_legs[0] &= !c_s[0];
       swing_legs[3] &= !c_s[3];
     } else {
@@ -913,6 +913,7 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
     }
   } else if (swing_2) {
     if (early_contact_2) {
+      // std::cout << "early_contact_2_detected";
       swing_legs[1] &= !c_s[1];
       swing_legs[2] &= !c_s[2];
     } else {
@@ -922,7 +923,7 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
   }
 }
 
-void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, const StateVec &qd, const StateVec &qd_filtered, const StateVec &qd_des, const Args &args) {
+void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, const StateVec &qd, const StateVec &qd_filtered, const StateVec &qd_des, const Args &args, const ContactState c_s) {
   double foot_pos_des[3];
   double foot_vel_des[3];
   double foot_acc_des[3];
@@ -942,10 +943,20 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   
   //TODO this is technically wrong, since t_phase can go negative,
   //but because of the way gait_state_machine works this function 
-  //never gets called with such a t. Probably should clean up a bit.
-  double t_phase = 1/args.cont[ARG_T_STEP]*(fmod(data.t, args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])-args.cont[ARG_T_DWELL]);
+  // //never gets called with such a t. Probably should clean up a bit.
+
+  double t_phase = 1/args.cont[ARG_T_STEP]*( fmod( data.t, (args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL]))-args.cont[ARG_T_DWELL]  );
+  // double t_phase = ( fmod( data.t, (args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL]) ) ) / (args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL]);
 
   neutral_pos[2] = 0.075*(1-2*fabs(t_phase-0.5));
+  // double relative_z = 0;
+  // bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
+  // double z_offset = relative_z - args.cont[ARG_H] + args.cont[ARG_H_STEP]*( 1-2*fabs(t_phase-0.5) );
+  // neutral_pos[2] = z_offset;
+
+  // std::cout << "neutral pos_x :" << neutral_pos[0] << std::endl;
+  // std::cout << "neutral pos_y :" << neutral_pos[1] << std::endl;
+  // std::cout << "neutral pos_z :" << neutral_pos[2] << std::endl;
 
   double neutral_ang = atan2(neutral_pos[1]-q[Q_Y],neutral_pos[0]-q[Q_X]);
   double r = sqrt((neutral_pos[1]-q[Q_Y])*(neutral_pos[1]-q[Q_Y])+
@@ -959,10 +970,10 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   //TODO unclear which heuristic is actually better, they are very similiar numerically
   double x_delta = 0.5*0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*(qd_filtered[Q_X]+qd_des[Q_X]);
   double y_delta = 0.5*0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*(qd_filtered[Q_Y]+qd_des[Q_Y]);
-  //TODO be careful with q[Q_Z], really need height above ground plane
-  //double x_delta = 0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*qd_des[Q_X] +
+  // TODO be careful with q[Q_Z], really need height above ground plane
+  // double x_delta = 0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*qd_des[Q_X] +
   //                 sqrt(q[Q_Z]/9.81)*(qd_filtered[Q_X]-qd_des[Q_X]);
-  //double y_delta = 0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*qd_des[Q_Y] +
+  // double y_delta = 0.5*(args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL])*qd_des[Q_Y] +
   //                 sqrt(q[Q_Z]/9.81)*(qd_filtered[Q_Y]-qd_des[Q_Y]);
 
   //x_delta = fmax(fmin(x_delta,0.1),-0.1);
@@ -1001,7 +1012,9 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
     goal_pos[2] = neutral_pos[2];
   }
 
-  // std::cout << "goal_pos : " << goal_pos << std::endl;
+  // std::cout << "goal_pos_x : " << goal_pos[0] << std::endl;
+  // std::cout << "goal_pos_y : " << goal_pos[1] << std::endl;
+  // std::cout << "goal_pos_z : " << goal_pos[2] << std::endl;
   
   traj_gen::CubicPoly swing_traj[3];
   

@@ -82,7 +82,7 @@ void robot_params_init(Robot &r) {
   r.frames[F_BL_EE] = (RobotFrame) {"F_BL_EE", L_BL3,   0,   0, -0.213};
   r.frames[F_BR_EE] = (RobotFrame) {"F_BR_EE", L_BR3,   0,   0, -0.213};
 
-  //                                      frame,      name,    k,    b, mu, c_x, x_y, c_z
+  //                                      frame,      name,    k,    b, mu, c_x, c_y, c_z
   r.contacts[C_FL_EE] = (RobotContact) {F_FL_EE, "C_FL_EE", 20000, 1000,  0.7, 0,0,0};
   r.contacts[C_FR_EE] = (RobotContact) {F_FR_EE, "C_FR_EE", 20000, 1000,  0.7, 0,0,0};
   r.contacts[C_BL_EE] = (RobotContact) {F_BL_EE, "C_BL_EE", 20000, 1000,  0.7, 0,0,0};

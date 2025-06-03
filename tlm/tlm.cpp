@@ -152,6 +152,15 @@ void fill_derived_tlm(DerivedTelemetry *derived_tlm, Telemetry *tlm) {
   }
 
   derived_tlm->epoch_time = tlm->cycle_start_time.tv_sec + 1e-9*tlm->cycle_start_time.tv_nsec;
+  // derived_tlm->epoch_time = tlm->cycle_start_time.tv_sec;
+  double epoch_time = tlm->cycle_start_time.tv_sec + 1e-9*tlm->cycle_start_time.tv_nsec;  
+  double cy_start_time = tlm->cycle_start_time.tv_sec;
+  double cy_delta = 1e-9*tlm->cycle_start_time.tv_nsec;
+
+  // std::cout<<"epoch_time: "<< epoch_time <<std::endl; 
+  // std::cout<<"cycle_start: "<< cy_start_time <<std::endl;
+  // std::cout<<"cycle_delta: "<< cy_delta << std::endl;
+
 
   // Foot Position & Velocity in Global Frame -- data log into 'common timeseries'
   for (int i = 0; i < 12; ++i) {
