@@ -29,113 +29,6 @@ def Standardization(dat, mean, std):
         d = dat.shape[1]
     return (dat - mean) / std
 
-def euler_rates_to_body_omega(roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot):
-    """
-    Convert Euler angle rates to body angular velocity
-    """
-    sr, cr = np.sin(roll), np.cos(roll)
-    sp, cp = np.sin(pitch), np.cos(pitch)
-    ty = np.tan(pitch)
-
-    # Transformation matrix from Euler rate to angular velocity
-    T = np.array([
-        [1, 0, -sp],
-        [0, cr, sr * cp],
-        [0, -sr, cr * cp]
-    ])
-    return T @ np.array([roll_dot, pitch_dot, yaw_dot])
-
-# def get_foot_velocities(model, data, foot_site_ids):
-#     """
-#     Compute foot linear velocities in global frame using geom Jacobians.
-
-#     Args:
-#         model: MjModel
-#         data: MjData
-#         foot_geom_names: list of 4 geom names, e.g., ["FL", "FR", "RL", "RR"]
-
-#     Returns:
-#         (12,) np.ndarray: [FL(3), FR(3), RL(3), RR(3)] flattened velocity vector
-#     """
-#     foot_vels = []
-
-#     quat = data.qpos[3:7]
-#     R_gb = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
-
-#     for sid in foot_site_ids:
-#         jacp = np.zeros((3, model.nv))
-#         jacr = np.zeros((3, model.nv))
-#         mujoco.mj_jacSite(model, data, jacp, jacr, sid)
-#         foot_vel_g = jacp @ data.qvel  # (3,) vector
-#         foot_vel = R_gb.T @ foot_vel_g
-#         foot_vels.append(foot_vel)
-
-#     return np.concatenate(foot_vels)  # shape = (12,)
-
-def Transform2BodyFrame(q, quat, qd, foot_pos):
-    """
-    q: base's global position
-    quat: base's quaternions
-    qd: base's linear/angular velocities in global frame
-    foot_pos: Foot position in global frame
-    foot_vel: Foot velocity in global frame
-    """
-    R_gb = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_matrix()
-    # print(f"Shape of Rot Mtx arr: {R_gb.shape}")
-
-    vel_body = np.zeros( 3 )
-    foot_pos_body = np.zeros( 12 )
-    vel_body = R_gb.T @ qd[:3]   # Linear Base velocity
-
-    foot_pos_body[0:3] = R_gb.T @ ( foot_pos[0] - q )
-    foot_pos_body[3:6] = R_gb.T @ ( foot_pos[1] - q )
-    foot_pos_body[6:9] = R_gb.T @ ( foot_pos[2] - q )
-    foot_pos_body[9:12] = R_gb.T @ ( foot_pos[3] - q )
-
-    return vel_body, foot_pos_body
-
-def get_feet_vel_in_base(model, data, foot_site_names):
-    """
-    Compute foot linear velocities in the base frame using Jacobians.
-
-    Args:
-        model: MjModel
-        data: MjData
-        foot_site_names: list of foot site names (e.g., ["FL_contact", "FR_contact", "RL_contact", "RR_contact"])
-
-    Returns:
-        np.ndarray: shape (12,), each 3D foot velocity in base frame concatenated
-    """
-    base_body_id = model.body("base_link").id
-    R_wb = data.xmat[base_body_id].reshape(3, 3)  # world-to-base rotation
-    p_base = data.xpos[base_body_id]              # base position in world frame
-    v_base = data.qvel[0:3]                       # base linear velocity
-    w_base = data.qvel[3:6]                       # base angular velocity
-
-    feet_vel_base = []
-
-    for name in foot_site_names:
-        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)
-
-        # Compute position Jacobian of the site
-        jacp = np.zeros((3, model.nv))
-        mujoco.mj_jacSite(model, data, jacp, None, sid)
-
-        # Site velocity in world frame using Jacobian
-        v_site = jacp @ data.qvel  # (3,) linear velocity of site
-
-        # Relative position from base to site in world frame
-        r = data.site_xpos[sid] - p_base
-        omega_cross_r = np.cross(w_base, r)
-
-        # Velocity relative to base in base frame
-        v_rel = v_site - v_base - omega_cross_r
-        v_base_frame = R_wb.T @ v_rel
-
-        feet_vel_base.append(v_base_frame)
-
-    return np.concatenate(feet_vel_base)
-
 def update_state_buffer(buffer, new_state):
     """
     buffer: (N, D) numpy array
@@ -245,10 +138,12 @@ smoothed_mu_log = []
 
 def walk_idqp_adaptive( h_cmd, vx_cmd, vy_cmd, vrz_cmd, mu_cmd=0.7 ):
     global state_buffer, feed_forward_counter, previous_contact
-    ENABLE_ADAPTIVE = True
+    ENABLE_ADAPTIVE = True               # update mu of controller by using predictions or not
+    ENABLE_IMPULSE_DETECTION = False     # want to implement mu update only when impulse is detected or not
+
     # trj_col_list = list(range(9, 45))  # Joint pos/vel/torque
-    trj_col_list = list(range(69, 93))  # Foot pos/vel
-    cur_col_list = list(range(3, 9))
+    trj_col_list = list(range(69, 93))   # Foot pos/vel
+    cur_col_list = list(range(3, 9))     # base velocity/command velocity in body frame
     Sampling_rate = 10  # Frequency to update mu, Hz
     step_count = 0
 
@@ -264,6 +159,8 @@ def walk_idqp_adaptive( h_cmd, vx_cmd, vy_cmd, vrz_cmd, mu_cmd=0.7 ):
         foot_pos = tlm_data['feet_pos']
         foot_vel = tlm_data['feet_vel']
         vel_body, foot_pos_body, foot_vel_body = InBodyFrame( q, qd, foot_pos, foot_vel )
+
+        foot_force = tlm_data['f']
 
         # Data processing
         rpy_scaled = Standardization( q[:, 3:6] , np.zeros(3), np.ones(3)) 
@@ -290,28 +187,42 @@ def walk_idqp_adaptive( h_cmd, vx_cmd, vy_cmd, vrz_cmd, mu_cmd=0.7 ):
         
         state_buffer = update_state_buffer(state_buffer, New_state)
 
+        if (ENABLE_IMPULSE_DETECTION):
+            # 1. Detect contact
+            current_contact = []
+            for ff in foot_force:
+                contact_flag = ff > contact_force_threshold
+                current_contact.append(contact_flag)
+            current_contact = np.array(current_contact)
 
-        # For now, just fixed update ... without considering it is near the impact moment
-        input = torch.cat(( torch.tensor(state_buffer[:, trj_col_list].flatten(), dtype=torch.float32),
-                            torch.tensor(state_buffer[-1, cur_col_list], dtype=torch.float32) ),
-                            dim=0 )
-        with torch.no_grad():
-            output = Mymodel(input.to(device))
-        
-        # for smoothing
-        if output.item() < 0.05:
-            output = torch.tensor( 0.05 )
-            # print(f"Raw Output: {output[0].item()}")
-            output_temp = output.item()
+            # 2. New contact check
+            new_contact = np.logical_and(current_contact, np.logical_not(previous_contact))
+            if np.any(new_contact):
+                feed_forward_counter = FEED_FORWARD_HORIZON
+
+            previous_contact = current_contact.copy()
+        else:
+            feed_forward_counter = FEED_FORWARD_HORIZON     # always
+
+        # 3. DNN inference only if active
+        if (feed_forward_counter > 0) and (ENABLE_ADAPTIVE):
+            # print("inferring..")
+            input = torch.cat(( torch.tensor(state_buffer[:, trj_col_list].flatten(), dtype=torch.float32),
+                                torch.tensor(state_buffer[-1, cur_col_list], dtype=torch.float32) ),
+                                dim=0 )
+            with torch.no_grad():
+                output = Mymodel(input.to(device))
+            
+            # for smoothing
+            if output.item() < 0.05:
+                output = torch.tensor( 0.05 )
+                # print(f"Raw Output: {output[0].item()}")
+                output_temp = output.item()
 
         if (ENABLE_ADAPTIVE):
             New_Mu = update_weighted_moving_average(output_buffer, output_temp)
-        else:
-            New_Mu = mu_cmd
+            if (step_count % int( 1000/Sampling_rate ) == 0 ):
+                walk_idqp( h=h_cmd, vx=vx_cmd, vy=vy_cmd, vrz=vrz_cmd, mu=New_Mu )
         output_buffer.append(New_Mu)
-
-        
-        if (step_count % int( 1000/Sampling_rate ) == 0 ):
-            walk_idqp( h=h_cmd, vx=vx_cmd, vy=vy_cmd, vrz=vrz_cmd, mu=New_Mu )
 
         step_count += 1

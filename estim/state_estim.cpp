@@ -67,7 +67,6 @@ void state_estim(StateEstimator &estim, const OutputVec &y, StateVec &q, StateVe
   for (int contact = C_FL_EE; contact < C_BR_EE+1; ++contact) {
     if (estim.foot_force_filt[contact-C_FL_EE] - estim.foot_force_bias[contact-C_FL_EE] > 5) {
       c_s[contact] = true;
-      // std::cout << "contact state (" << contact << ") :" << c_s[contact] << std::endl;
     } else {
       c_s[contact] = false;
     }
@@ -211,10 +210,10 @@ bool contact_feet_terrain_z(const StateVec &q, const ContactState c_s, double &t
       z_sum -= contact_pos[2];
     }
   }
-  std::cout << "number of contact foot: " << contact_feet << std::endl;
+  // std::cout << "number of contact foot: " << contact_feet << std::endl;
   if (contact_feet != 0) {
     terrain_z = -z_sum/contact_feet;
-    std::cout << "Terrain z: " << terrain_z << std::endl;
+    // std::cout << "Terrain z: " << terrain_z << std::endl;
     return true;
   } else {
     terrain_z = 0;

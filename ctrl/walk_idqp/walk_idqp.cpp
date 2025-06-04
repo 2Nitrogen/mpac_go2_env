@@ -946,13 +946,7 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   // //never gets called with such a t. Probably should clean up a bit.
 
   double t_phase = 1/args.cont[ARG_T_STEP]*( fmod( data.t, (args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL]))-args.cont[ARG_T_DWELL]  );
-  // double t_phase = ( fmod( data.t, (args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL]) ) ) / (args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL]);
-
   neutral_pos[2] = 0.075*(1-2*fabs(t_phase-0.5));
-  // double relative_z = 0;
-  // bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
-  // double z_offset = relative_z - args.cont[ARG_H] + args.cont[ARG_H_STEP]*( 1-2*fabs(t_phase-0.5) );
-  // neutral_pos[2] = z_offset;
 
   // std::cout << "neutral pos_x :" << neutral_pos[0] << std::endl;
   // std::cout << "neutral pos_y :" << neutral_pos[1] << std::endl;
