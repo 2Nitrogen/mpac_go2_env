@@ -12,6 +12,26 @@
 #include "hdf5.h"
 #include "fk.h"
 
+#include <iomanip>
+#include <cstddef>
+
+void printTelemetryLayout()
+{
+    std::cout << "sizeof(Telemetry) = " << sizeof(Telemetry) << " bytes\n";
+
+    std::cout << std::left;
+    std::cout << "offset(cycle_cnt)    = " << std::setw(4)
+              << offsetof(Telemetry, cycle_cnt)    << '\n';
+    std::cout << "offset(ctrl_curr)    = " << std::setw(4)
+              << offsetof(Telemetry, ctrl_curr)    << '\n';
+    std::cout << "offset(prim_path_len)= " << std::setw(4)
+              << offsetof(Telemetry, prim_path_len) << '\n';
+    std::cout << "offset(feet_pos)     = " << std::setw(4)
+              << offsetof(Telemetry, feet_pos)     << '\n';
+    std::cout << "offset(feet_vel)     = " << std::setw(4)
+              << offsetof(Telemetry, feet_vel)     << '\n';
+}
+
 void fill_tlm(Robot &robot, Telemetry *tlm) {
   
   for (int i = 0; i < NUM_Q; ++i) {
@@ -82,7 +102,7 @@ void fill_tlm(Robot &robot, Telemetry *tlm) {
   tlm->feet_pos[1] = foot_pos_FL[1];
   tlm->feet_pos[2] = foot_pos_FL[2];
   // std::cout<<"FL_x: "<< foot_pos_FL[0] <<std::endl;
-  // std::cout<<"tlm_FL_x: "<< tlm->feet_pos[0] <<std::endl;
+  // std::cout<<"tlm_FL_z: "<< tlm->feet_pos[2] <<std::endl;
   
   tlm->feet_pos[3] = foot_pos_FR[0];
   tlm->feet_pos[4] = foot_pos_FR[1];
@@ -223,6 +243,8 @@ void create_common_timeseries_type(hid_t &timeseries_type) {
 
 void fill_attributes(std::vector<TelemetryAttribute> &attributes) {
   TelemetryAttributes attr;
+
+  printTelemetryLayout();
 
   Robot robot;
   robot_params_init(robot);

@@ -253,7 +253,7 @@ void init(const StateVec &q_in,
 
       double mu = robot.contacts[i].mu;  ////////////////////////////////////////////////////////////////////////////////////////////
       // double mu = args.cont[ARG_MU];
-      // std::cout << "new mu: " << mu << std::endl;
+      std::cout << "new mu: " << mu << std::endl;
 
       // [NOTE]: mu as updated by our model ?!?!
 
@@ -338,7 +338,7 @@ void execute(const StateVec &q_in,
     walk_tlm.swing_leg[i] = data.swing_legs[i];
     if (data.swing_legs[i]) {
       //TODO inconsistent w.r.t. variables in data vs local to execute
-      compute_swing_leg_joint_des(data, (Contact)i, q, qd, qd_filtered, qd_des, args, c_s);
+      compute_swing_leg_joint_des(data, (Contact)i, q, qd, qd_filtered, qd_des, args);
       qdd_des[6+3*i] = data.swing_leg_qdd_des[i][0];
       qdd_des[6+3*i+1] = data.swing_leg_qdd_des[i][1];
       qdd_des[6+3*i+2] = data.swing_leg_qdd_des[i][2];
@@ -923,7 +923,7 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
   }
 }
 
-void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, const StateVec &qd, const StateVec &qd_filtered, const StateVec &qd_des, const Args &args, const ContactState c_s) {
+void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, const StateVec &qd, const StateVec &qd_filtered, const StateVec &qd_des, const Args &args) {
   double foot_pos_des[3];
   double foot_vel_des[3];
   double foot_acc_des[3];

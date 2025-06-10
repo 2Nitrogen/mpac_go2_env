@@ -1,24 +1,13 @@
-import os
-import sys
-import time
-import threading
-from threading import Thread
-import random
 import pickle
 import numpy as np
-import mujoco
-import mujoco.viewer
-from mujoco import MjModel, MjData, mj_step, mj_forward, mj_resetData
-from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-from unitree_sdk2py_bridge import UnitreeSdk2Bridge, ElasticBand
-import config
 from scipy.spatial.transform import Rotation as R
 import torch
 from collections import deque
 
-from mpac_cmd import *
+from atnmy.mpac_cmd import *
 from time import sleep
 from math import atan2, sin, cos, sqrt, pi
+import time
 
 
 def Standardization(dat, mean, std):
@@ -50,6 +39,7 @@ def update_weighted_moving_average(buffer, new_value, alpha=1, threshold=0.05, c
 
     return: new smoothed value
     """
+    new_value = float(new_value)
     if len(buffer) == 0:
         smoothed = new_value
     else:
@@ -64,22 +54,40 @@ def update_weighted_moving_average(buffer, new_value, alpha=1, threshold=0.05, c
         smoothed = (1 - weight) * prev_avg + weight * new_value
 
     buffer.append(smoothed)
+    # print(f"calculated_smoothed: {smoothed}")
     return smoothed
+
+def euler_rates_to_body_omega(roll, pitch, yaw, roll_dot, pitch_dot, yaw_dot):
+    """
+    Convert Euler angle rates to body angular velocity
+    """
+    sr, cr = np.sin(roll), np.cos(roll)
+    sp, cp = np.sin(pitch), np.cos(pitch)
+    ty = np.tan(pitch)
+
+    # Transformation matrix from Euler rate to angular velocity
+    T = np.array([
+        [1, 0, -sp],
+        [0, cr, sr * cp],
+        [0, -sr, cr * cp]
+    ])
+    return T @ np.array([roll_dot, pitch_dot, yaw_dot])
 
 def InBodyFrame(q, qd, foot_pos, foot_vel):
 
     R_gb = np.zeros( (3, 3) )
-    R_gb = R.from_euler('xyz', q[:, 3:6]).as_matrix()
+    R_gb = R.from_euler('xyz', q[3:6]).as_matrix()
     # print(f"Shape of Rot Mtx arr: {R_gb.shape}")
 
-    vel_body = np.zeros( 6 )
+    # vel_body = np.zeros( 6 )
+    vel_body = np.zeros( 3 )
     w_body = np.zeros( 3 )
     foot_pos_body = np.zeros( 12 )
     foot_vel_body = np.zeros( 12 )
     
 
     vel_body[0:3] = R_gb.T @ qd[0:3]   # Linear velocity
-    vel_body[3:6] = R_gb.T @ qd[3:6]   # Angular velocity
+    # vel_body[3:6] = R_gb.T @ qd[3:6]   # Angular velocity
 
     w_body = euler_rates_to_body_omega( q[3], q[4], q[5], qd[3], qd[4], qd[5] )
 
@@ -96,14 +104,6 @@ def InBodyFrame(q, qd, foot_pos, foot_vel):
 
     return vel_body, foot_pos_body, foot_vel_body
 
-# Load model and data from Mujoco
-mj_model = MjModel.from_xml_path(config.ROBOT_SCENE)
-mj_data = MjData(mj_model)
-mj_model.opt.timestep = config.SIMULATE_DT
-mj_forward(mj_model, mj_data)
-dt = mj_model.opt.timestep
-num_motor_ = mj_model.nu
-dim_motor_sensor_ = 3 * num_motor_
 
 # Load trained model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -134,20 +134,26 @@ previous_contact = np.array([False, False, False, False])
 OUTPUT_BUFFER_SIZE = 200
 output_buffer = deque(maxlen=OUTPUT_BUFFER_SIZE)
 smoothed_mu_log = []
+output_temp = 0
+sim_time = 0
 
-
-def walk_idqp_adaptive( h_cmd, vx_cmd, vy_cmd, vrz_cmd, mu_cmd=0.7 ):
-    global state_buffer, feed_forward_counter, previous_contact
-    ENABLE_ADAPTIVE = True               # update mu of controller by using predictions or not
-    ENABLE_IMPULSE_DETECTION = False     # want to implement mu update only when impulse is detected or not
+def walk_idqp_adaptive( h_cmd=0.25, vx_cmd=0, vy_cmd=0, vrz_cmd=0, mu_cmd=0.7 ):
+    global state_buffer, feed_forward_counter, previous_contact, output_temp, sim_time
+    ENABLE_ADAPTIVE = True              # update mu of controller by using predictions or not
+    ENABLE_IMPULSE_DETECTION = True     # want to implement mu update only when impulse is detected or not
+    
 
     # trj_col_list = list(range(9, 45))  # Joint pos/vel/torque
     trj_col_list = list(range(69, 93))   # Foot pos/vel
     cur_col_list = list(range(3, 9))     # base velocity/command velocity in body frame
     Sampling_rate = 10  # Frequency to update mu, Hz
     step_count = 0
+    mu_log = []
 
     while (True):
+        if step_count == 0:
+            time_init =time.perf_counter()
+
         tlm_data = get_tlm_data()
 
         v_cmd_vec = np.array([vx_cmd, vy_cmd, vrz_cmd])
@@ -157,17 +163,37 @@ def walk_idqp_adaptive( h_cmd, vx_cmd, vy_cmd, vrz_cmd, mu_cmd=0.7 ):
         tau = tlm_data['u']
         q_des = tlm_data['q_des']
         foot_pos = tlm_data['feet_pos']
+        # print(f"foot pos: {foot_pos}")
         foot_vel = tlm_data['feet_vel']
+        # print(f"feet vel: {foot_vel}")
         vel_body, foot_pos_body, foot_vel_body = InBodyFrame( q, qd, foot_pos, foot_vel )
+
+        # if (not np.isfinite(q).all()):
+        #     print("\nq is not finite")
+        # if (not np.isfinite(qd).all()):
+        #     print("\nqd is not finite")
+        # if (not np.isfinite(tau_cmd).all()):
+        #     print("\ntau_cmd is not finite")
+        # if (not np.isfinite(tau).all()):
+        #     print("\ntau is not finite")
+        # if (not np.isfinite(q_des).all()):
+        #     print("\nq_des is not finite")
+        # if (not np.isfinite(foot_pos).all()):
+        #     print("\nfoot_pos is not finite")
+        # if (not np.isfinite(foot_vel).all()):
+        #     print("\nfoot_vel is not finite")
+        # if (not np.isfinite(vel_body).all()):
+        #     print("\nvel_body is not finite")
+
 
         foot_force = tlm_data['f']
 
         # Data processing
-        rpy_scaled = Standardization( q[:, 3:6] , np.zeros(3), np.ones(3)) 
+        rpy_scaled = Standardization( q[3:6] , np.zeros(3), np.ones(3)) 
         vel_body_scaled = Standardization(vel_body, np.zeros(3), np.ones(3)*loaded_stat['std_v_cmd'])
         v_cmd_scaled = Standardization(v_cmd_vec, np.zeros(3), np.ones(3)*loaded_stat['std_v_cmd'])
-        Jnt_pos_scaled = Standardization( q[:, 6:18], loaded_stat['standing_q'], np.ones(12)*loaded_stat['std_q'] )
-        Jnt_vel_scaled = Standardization( qd[:, 6:18], np.zeros(12), np.ones(12)*loaded_stat['std_qd'] )
+        Jnt_pos_scaled = Standardization( q[6:18], loaded_stat['standing_q'], np.ones(12)*loaded_stat['std_q'] )
+        Jnt_vel_scaled = Standardization( qd[6:18], np.zeros(12), np.ones(12)*loaded_stat['std_qd'] )
         tau_cmd_scaled = Standardization( tau_cmd, loaded_stat['standing_tau_cmd'], np.ones(12)*loaded_stat['std_tau_cmd'] )
         tau_scaled = Standardization( tau, loaded_stat['standing_tau_cmd'], np.ones(12)*loaded_stat['std_tau_cmd'] )
         Jnt_pos_des_scaled = Standardization( q_des, loaded_stat['standing_q'], np.ones(12)*loaded_stat['std_q'] )
@@ -184,6 +210,10 @@ def walk_idqp_adaptive( h_cmd, vx_cmd, vy_cmd, vrz_cmd, mu_cmd=0.7 ):
                                 Jnt_pos_des_scaled,          # desired joint position, dim=12
                                 foot_pos_body_scaled,        # foot position in body frame, dim=12
                                 foot_vel_body_scaled ])      # foot velocity in body frame, dim=12
+        
+        # Check if NaN data exists
+        # print("New_state: ")
+        # print( np.isfinite(New_state).all() )
         
         state_buffer = update_state_buffer(state_buffer, New_state)
 
@@ -210,19 +240,42 @@ def walk_idqp_adaptive( h_cmd, vx_cmd, vy_cmd, vrz_cmd, mu_cmd=0.7 ):
             input = torch.cat(( torch.tensor(state_buffer[:, trj_col_list].flatten(), dtype=torch.float32),
                                 torch.tensor(state_buffer[-1, cur_col_list], dtype=torch.float32) ),
                                 dim=0 )
+
             with torch.no_grad():
                 output = Mymodel(input.to(device))
+            feed_forward_counter -= 1
             
             # for smoothing
             if output.item() < 0.05:
-                output = torch.tensor( 0.05 )
-                # print(f"Raw Output: {output[0].item()}")
+                output_temp = 0.05
+            else:
                 output_temp = output.item()
 
-        if (ENABLE_ADAPTIVE):
             New_Mu = update_weighted_moving_average(output_buffer, output_temp)
-            if (step_count % int( 1000/Sampling_rate ) == 0 ):
-                walk_idqp( h=h_cmd, vx=vx_cmd, vy=vy_cmd, vrz=vrz_cmd, mu=New_Mu )
+            # New_Mu = output_temp
+            
+        elif (not ENABLE_ADAPTIVE):
+            New_Mu = mu_cmd
+
+        # print( f"Predicted mu from model: {output_temp}" )
         output_buffer.append(New_Mu)
 
+        if (step_count % int( 1000/Sampling_rate ) == 0 ):
+            print(f"Mu updated ... New_mu: {New_Mu}")
+            walk_idqp( h=h_cmd, vx=vx_cmd, vy=vy_cmd, vrz=vrz_cmd, mu=New_Mu )
+        
+        while time.perf_counter() - time_init < sim_time:
+            pass
+
+        if step_count < 25000:
+            mu_log.append( New_Mu )
+        elif step_count == 25000:
+            with open("/home/hjang4/Desktop/Mu_log_0609.pkl", "wb") as f:
+                pickle.dump(mu_log, f)
+                print("log saved")
+        else:
+            print("log already saved")
+
         step_count += 1
+        sim_time = (0.001)*step_count
+        

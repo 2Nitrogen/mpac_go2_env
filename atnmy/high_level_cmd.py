@@ -4,7 +4,7 @@ from math import atan2, sin, cos, sqrt, pi
 # from qpsolvers import solve_qp
 
 def min_angle_diff(th1, th2):
-  return (th1-th2) - 2*pi * round((th1-th2)/(2*pi));
+  return (th1-th2) - 2*pi * round((th1-th2)/(2*pi))
 
 # simple proportional control with saturation
 def walk_to(x, y, th):
