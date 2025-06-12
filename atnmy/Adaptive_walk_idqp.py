@@ -29,7 +29,7 @@ def update_state_buffer(buffer, new_state):
     buffer[-1] = new_state           # Latest state at the very last row
     return buffer
 
-def update_weighted_moving_average(buffer, new_value, alpha=1, threshold=0.05, conservativity=0.8):
+def update_weighted_moving_average(buffer, new_value, alpha=1, threshold=0.2, conservativity=1.0):
     """
     buffer: deque of past smoothed values
     new_value: new DNN output (scalar)
@@ -131,11 +131,46 @@ feed_forward_counter = 0
 previous_contact = np.array([False, False, False, False])
 
 # DNN output buffer for smoothing
-OUTPUT_BUFFER_SIZE = 200
+OUTPUT_BUFFER_SIZE = 500
 output_buffer = deque(maxlen=OUTPUT_BUFFER_SIZE)
+
+FILTERED_OUTPUT_BUFFER_SIZE = 200
+filtered_output_buffer = deque(maxlen=FILTERED_OUTPUT_BUFFER_SIZE)
 smoothed_mu_log = []
 output_temp = 0
 sim_time = 0
+
+
+
+##### Modify filtering method #####
+
+def update_filter(mu_buffer):
+    mu_buffer = [m for m in mu_buffer if np.isfinite(m)]
+    
+    top5 = sorted(mu_buffer, reverse=True)[:3]
+    if len(top5) == 0:
+        top5_mean = 0.7
+    else:
+        top5_mean = sum( top5 ) / len( top5 )
+    
+    if len(mu_buffer) == 0:
+        mean = 0.7
+    else:
+        mean = sum(mu_buffer) / len(mu_buffer)
+
+
+    v = np.var( np.array(mu_buffer) )
+    f = (0.6644)*( np.exp(4.1354*v)) + (-0.3764)
+    w = 1.0046 / ( 1 + np.exp( (f-0.9121)*(7.6782) ) )
+    # print(f"w: {w}")
+
+    filtered_mu = (1-w)*top5_mean + w*mean
+    # filtered_mu = (top5_mean + mean) / 2
+    return filtered_mu
+
+###################################
+
+
 
 def walk_idqp_adaptive( h_cmd=0.25, vx_cmd=0, vy_cmd=0, vrz_cmd=0, mu_cmd=0.7 ):
     global state_buffer, feed_forward_counter, previous_contact, output_temp, sim_time
@@ -250,27 +285,39 @@ def walk_idqp_adaptive( h_cmd=0.25, vx_cmd=0, vy_cmd=0, vrz_cmd=0, mu_cmd=0.7 ):
                 output_temp = 0.05
             else:
                 output_temp = output.item()
+            
+            output_buffer.append(output_temp)            
+            filt_new = update_filter(output_buffer)
+            if filt_new < 0.05:
+                filt_new = 0.05
 
-            New_Mu = update_weighted_moving_average(output_buffer, output_temp)
-            # New_Mu = output_temp
+            filt_new_smoothed = update_weighted_moving_average( filtered_output_buffer, filt_new )
+            New_Mu = filt_new_smoothed
+
             
         elif (not ENABLE_ADAPTIVE):
             New_Mu = mu_cmd
 
         # print( f"Predicted mu from model: {output_temp}" )
-        output_buffer.append(New_Mu)
+        # output_buffer.append(New_Mu)
 
         if (step_count % int( 1000/Sampling_rate ) == 0 ):
+            if ( not np.isfinite(New_Mu) ): # Reject exception
+                New_Mu = mu_cmd
+            elif ( New_Mu < 0.05 ):
+                New_Mu = 0.05
             print(f"Mu updated ... New_mu: {New_Mu}")
             walk_idqp( h=h_cmd, vx=vx_cmd, vy=vy_cmd, vrz=vrz_cmd, mu=New_Mu )
         
         while time.perf_counter() - time_init < sim_time:
             pass
 
-        if step_count < 25000:
+
+        # Log to local file
+        if step_count < 50000:
             mu_log.append( New_Mu )
-        elif step_count == 25000:
-            with open("/home/hjang4/Desktop/Mu_log_0609.pkl", "wb") as f:
+        elif step_count == 50000:
+            with open("/home/hjang4/Desktop/Mu_log_0612_2.pkl", "wb") as f:
                 pickle.dump(mu_log, f)
                 print("log saved")
         else:

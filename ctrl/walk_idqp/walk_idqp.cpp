@@ -303,6 +303,10 @@ void init(const StateVec &q_in,
     data.solver.initSolver();
   }
 
+  if (!std::isfinite(args.cont[ARG_MU]) || args.cont[ARG_MU] <= 0.0) {
+    std::cerr << "[WARN] Invalid mu value: " << args.cont[ARG_MU];
+  }
+
   data.mu_arg = args.cont[ARG_MU];
 }
 
