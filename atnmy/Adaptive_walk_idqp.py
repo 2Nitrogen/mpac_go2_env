@@ -29,7 +29,7 @@ def update_state_buffer(buffer, new_state):
     buffer[-1] = new_state           # Latest state at the very last row
     return buffer
 
-def update_weighted_moving_average(buffer, new_value, alpha=1, threshold=0.2, conservativity=1.0):
+def update_weighted_moving_average(buffer, new_value, alpha=1, threshold=0.15, conservativity=1.0):
     """
     buffer: deque of past smoothed values
     new_value: new DNN output (scalar)
@@ -131,10 +131,10 @@ feed_forward_counter = 0
 previous_contact = np.array([False, False, False, False])
 
 # DNN output buffer for smoothing
-OUTPUT_BUFFER_SIZE = 500
+OUTPUT_BUFFER_SIZE = 200
 output_buffer = deque(maxlen=OUTPUT_BUFFER_SIZE)
 
-FILTERED_OUTPUT_BUFFER_SIZE = 200
+FILTERED_OUTPUT_BUFFER_SIZE = 50
 filtered_output_buffer = deque(maxlen=FILTERED_OUTPUT_BUFFER_SIZE)
 smoothed_mu_log = []
 output_temp = 0
@@ -144,28 +144,38 @@ sim_time = 0
 
 ##### Modify filtering method #####
 
-def update_filter(mu_buffer):
+def update_filter(mu_buffer, mu_pred):
     mu_buffer = [m for m in mu_buffer if np.isfinite(m)]
     
-    top5 = sorted(mu_buffer, reverse=True)[:3]
+    top5 = sorted(mu_buffer, reverse=True)[:5]
     if len(top5) == 0:
         top5_mean = 0.7
     else:
         top5_mean = sum( top5 ) / len( top5 )
+    # print(f"Upper boud: {top5_mean}")
     
     if len(mu_buffer) == 0:
         mean = 0.7
     else:
         mean = sum(mu_buffer) / len(mu_buffer)
 
+    # Heuristic search
+    # v = np.var( np.array(mu_buffer) )
+    # f = (0.6644)*( np.exp(4.1354*v)) + (-0.3764)
+    # w = 1.0046 / ( 1 + np.exp( (f-0.9121)*(7.6782) ) )
+    # filtered_mu = (1-w)*top5_mean + w*mean
 
-    v = np.var( np.array(mu_buffer) )
-    f = (0.6644)*( np.exp(4.1354*v)) + (-0.3764)
-    w = 1.0046 / ( 1 + np.exp( (f-0.9121)*(7.6782) ) )
-    # print(f"w: {w}")
+    # Conditioned Filtering
+    mu_buffer_arr = np.array(mu_buffer)
+    w = np.zeros( OUTPUT_BUFFER_SIZE )
+    for idx, mu in enumerate( mu_buffer_arr ):
+        w[idx] = 1 / ( top5_mean**(-10) + np.exp( -10*(mu - top5_mean/2)/top5_mean ) )
+    
+    if len(mu_buffer_arr) == OUTPUT_BUFFER_SIZE:
+        filtered_mu = np.dot( w.T, mu_buffer_arr ) / np.sum( w )
+    else:
+        filtered_mu = 0.7
 
-    filtered_mu = (1-w)*top5_mean + w*mean
-    # filtered_mu = (top5_mean + mean) / 2
     return filtered_mu
 
 ###################################
@@ -202,23 +212,6 @@ def walk_idqp_adaptive( h_cmd=0.25, vx_cmd=0, vy_cmd=0, vrz_cmd=0, mu_cmd=0.7 ):
         foot_vel = tlm_data['feet_vel']
         # print(f"feet vel: {foot_vel}")
         vel_body, foot_pos_body, foot_vel_body = InBodyFrame( q, qd, foot_pos, foot_vel )
-
-        # if (not np.isfinite(q).all()):
-        #     print("\nq is not finite")
-        # if (not np.isfinite(qd).all()):
-        #     print("\nqd is not finite")
-        # if (not np.isfinite(tau_cmd).all()):
-        #     print("\ntau_cmd is not finite")
-        # if (not np.isfinite(tau).all()):
-        #     print("\ntau is not finite")
-        # if (not np.isfinite(q_des).all()):
-        #     print("\nq_des is not finite")
-        # if (not np.isfinite(foot_pos).all()):
-        #     print("\nfoot_pos is not finite")
-        # if (not np.isfinite(foot_vel).all()):
-        #     print("\nfoot_vel is not finite")
-        # if (not np.isfinite(vel_body).all()):
-        #     print("\nvel_body is not finite")
 
 
         foot_force = tlm_data['f']
@@ -287,12 +280,13 @@ def walk_idqp_adaptive( h_cmd=0.25, vx_cmd=0, vy_cmd=0, vrz_cmd=0, mu_cmd=0.7 ):
                 output_temp = output.item()
             
             output_buffer.append(output_temp)            
-            filt_new = update_filter(output_buffer)
+            filt_new = update_filter(output_buffer, output_temp)
             if filt_new < 0.05:
                 filt_new = 0.05
 
             filt_new_smoothed = update_weighted_moving_average( filtered_output_buffer, filt_new )
-            New_Mu = filt_new_smoothed
+            New_Mu = round( filt_new_smoothed, 2 )
+            # New_Mu = filt_new
 
             
         elif (not ENABLE_ADAPTIVE):
@@ -317,7 +311,7 @@ def walk_idqp_adaptive( h_cmd=0.25, vx_cmd=0, vy_cmd=0, vrz_cmd=0, mu_cmd=0.7 ):
         if step_count < 50000:
             mu_log.append( New_Mu )
         elif step_count == 50000:
-            with open("/home/hjang4/Desktop/Mu_log_0612_2.pkl", "wb") as f:
+            with open("/home/hjang4/Desktop/Mu_log_0620.pkl", "wb") as f:
                 pickle.dump(mu_log, f)
                 print("log saved")
         else:

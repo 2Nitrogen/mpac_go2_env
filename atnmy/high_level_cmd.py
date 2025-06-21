@@ -87,7 +87,3 @@ def set_cbf(x, y, r, epsilon):
   y_m = tlm_data['q'][1]
 
   h = (x_m-x)*(x_m-x) + (y_m-y)*(y_m-y) - (r+epsilon)
-
-
-
-
