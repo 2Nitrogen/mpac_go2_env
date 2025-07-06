@@ -3,4 +3,6 @@ build/
 *.o
 *.out
 mpac_core/
-
+*.pt
+*.pkl
+__pycache__/

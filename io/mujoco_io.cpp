@@ -120,11 +120,29 @@ void Mujoco_io::read(OutputVec &y) {
   y(S_IMU_GYRO_RY) = gyro_body(1);
   y(S_IMU_GYRO_RZ) = gyro_body(2);
 
-  // foot force
+  // int threshold = 15;
+
   y(F_FRC_FL_EE) = low_state.foot_force()[FL_];
   y(F_FRC_FR_EE) = low_state.foot_force()[FR_];
   y(F_FRC_BL_EE) = low_state.foot_force()[RL_];
   y(F_FRC_BR_EE) = low_state.foot_force()[RR_];
+
+  // if(low_state.foot_force()[FL_] < threshold)
+  //   y(F_FRC_FL_EE) = 0;
+
+  // if(low_state.foot_force()[FR_] < threshold)
+  //   y(F_FRC_FR_EE) = 0;
+
+  // if(low_state.foot_force()[RL_] < threshold)
+  //   y(F_FRC_BL_EE) = 0;
+
+  // if(low_state.foot_force()[RR_] < threshold)
+  //   y(F_FRC_BR_EE) = 0;  
+
+  // std::cout<<"fl: "<< low_state.foot_force()[FL_] <<std::endl;
+  // std::cout<<"fr: "<< low_state.foot_force()[FR_] <<std::endl;
+  // std::cout<<"rl: "<< low_state.foot_force()[RL_] <<std::endl;
+  // std::cout<<"rr: "<< low_state.foot_force()[RR_] <<std::endl;
 
   // Joints, converting from unitree convention to ours
   y(S_Q_FL1) = low_state.motor_state()[FL_0].q();

@@ -38,27 +38,21 @@ static const int num_constraints =   NUM_U /*input constraints*/
                                    //+ NUM_U /*qdd-qdd_des for swing legs */;
 static const int qd_buff_size = 100;
 
-// const double step_height = 0.075;//0.3
-// const double step_time = 0.25; //0.3
-// const double dwell_time = 0.05;
-
 const double step_height = 0.075;
-// const double step_time = 0.25;
 const double step_time = 0.25;
 const double dwell_time = 0.05;
 
 // const double qdd_des_limit[3] = {1.2, 0.8, 2};
 // const double qd_des_limit[3] = {0.3, 0.2, 0.5};
 
+// const double qdd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
+// const double qd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
 
-const double qdd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
-const double qd_des_limit[3] = {INFINITY, INFINITY, INFINITY};
-
+const double qdd_des_limit[3] = {7, 1, 2};
+const double qd_des_limit[3] = {1, 0.5, 0.5};
 
 
 //double params[] = {50,50,500,200,200,400};
-//double params[] = {0,0,300,300,300,400,
-//                   25,25,35,15,15,35};
 double params[] = {0,0,300,300,300,400,
                    25,25,35,15,15,35};
 
@@ -107,6 +101,10 @@ typedef struct {
   OsqpEigen::Solver solver;
 
   double mu_arg;
+
+  double delta_group1[2];   // x_delta, y_delta for FL&RR (phase 1)
+  double delta_group2[2];   // x_delta, y_delta for FR&RL (phase 2)
+  int last_phase; // 0 or 1
 
 } Data;
 
@@ -305,9 +303,11 @@ void init(const StateVec &q_in,
 
   if (!std::isfinite(args.cont[ARG_MU]) || args.cont[ARG_MU] <= 0.0) {
     std::cerr << "[WARN] Invalid mu value: " << args.cont[ARG_MU];
+    data.mu_arg = robot.contacts[0].mu;
   }
-
-  data.mu_arg = args.cont[ARG_MU];
+  else {
+    data.mu_arg = args.cont[ARG_MU];
+  }
 }
 
 
@@ -334,6 +334,15 @@ void execute(const StateVec &q_in,
   data.t += CTRL_LOOP_DURATION;
   StateVec qd_filtered = update_qd_filter(qd);
   gait_state_machine(data.t, q, c_s, data.swing_legs, data.foot_pos_init, args);
+  // int phase = gait_state_machine(data.t, q, c_s, data.swing_legs, data.foot_pos_init, args);
+  // // Save/Load new delta according to the current phase
+  // if (phase == 1) {
+  //     // FL&RR swing
+  //     data.last_phase = 1;
+  // } else if (phase == 2) {
+  //     // FR&RL swing
+  //     data.last_phase = 2;
+  // }
   StateVec qd_des = compute_body_qd_des(q, args);
   StateVec q_des = compute_body_q_des(q, qd_des, args);
   StateVec qdd_des = compute_body_qdd_des(q, qd, q_des, qd_des);
@@ -506,7 +515,8 @@ void setpoint(const StateVec &q_in,
   qd_des = VectorXd::Zero((int)NUM_Q);
   q_des[Q_Z] = args.cont[ARG_H];
   q_des[Q_RX] = 0;
-  q_des[Q_RY] = 0;
+  q_des[Q_RY] = 0.04;
+  q_des[Q_RZ] = -0.07;
   qd_des[Q_X] = args.cont[ARG_VX]*cos(q[Q_RZ]) - args.cont[ARG_VY]*sin(q[Q_RZ]);
   qd_des[Q_Y] = args.cont[ARG_VX]*sin(q[Q_RZ]) + args.cont[ARG_VY]*cos(q[Q_RZ]);
   qd_des[Q_RZ] = args.cont[ARG_VRZ];
@@ -927,6 +937,48 @@ void gait_state_machine(double t, const StateVec &q, const ContactState c_s, boo
   }
 }
 
+// // Return: 0=none, 1=FL&RR swing, 2=FR&RL swing
+// int gait_state_machine(double t, const StateVec &q, const ContactState c_s,
+//                       bool swing_legs[4], double foot_pos_init[4][3], const Args &args) {
+//     double duration = 2*(args.cont[ARG_T_DWELL]+args.cont[ARG_T_STEP]);
+//     double t_phase = fmod(t,duration);
+
+//     double dwell_1 = t_phase < args.cont[ARG_T_DWELL];
+//     double swing_1 = args.cont[ARG_T_DWELL] <= t_phase && t_phase < args.cont[ARG_T_STEP] + args.cont[ARG_T_DWELL];
+//     double early_contact_1 = args.cont[ARG_T_DWELL] + args.cont[ARG_T_STEP]/2 <= t_phase && t_phase < args.cont[ARG_T_STEP] + args.cont[ARG_T_DWELL];
+//     double dwell_2 = args.cont[ARG_T_STEP] + args.cont[ARG_T_DWELL] <= t_phase && t_phase < args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL];
+//     double swing_2 = args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL] <= t_phase && t_phase < 2*args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL];
+//     double early_contact_2 = args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL] + args.cont[ARG_T_STEP]/2 <= t_phase && t_phase < 2*args.cont[ARG_T_STEP] + 2*args.cont[ARG_T_DWELL];
+
+//     if (dwell_1 || dwell_2) {
+//         for (int i = 0; i < 4; ++i) {
+//             fk(q, foot_pos_init[i], (Frame)(i+F_FL_EE));
+//             swing_legs[i]=false;
+//         }
+//         return 0; // no swing
+//     } else if (swing_1) {
+//         if (early_contact_1) {
+//             swing_legs[0] &= !c_s[0];
+//             swing_legs[3] &= !c_s[3];
+//         } else {
+//             swing_legs[0] = true;
+//             swing_legs[3] = true;
+//         }
+//         return 1; // FL & RR swing phase
+//     } else if (swing_2) {
+//         if (early_contact_2) {
+//             swing_legs[1] &= !c_s[1];
+//             swing_legs[2] &= !c_s[2];
+//         } else {
+//             swing_legs[1] = true;
+//             swing_legs[2] = true;
+//         }
+//         return 2; // FR & RL swing phase
+//     }
+//     return 0; // default: no swing
+// }
+
+
 void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, const StateVec &qd, const StateVec &qd_filtered, const StateVec &qd_des, const Args &args) {
   double foot_pos_des[3];
   double foot_vel_des[3];
@@ -941,6 +993,11 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
               -0.1,0,0,
                0.1,0,0,
               -0.1,0,0;
+  // q_neutral << q.head(3),0,0,q[Q_RZ],
+  //             0.0,0,0,
+  //             0.0,0,0,
+  //             0.0,0,0,
+  //             0.0,0,0;
   q_neutral[Q_X] -= data.i_err[0];
   q_neutral[Q_Y] -= data.i_err[1];
   fk(q_neutral, neutral_pos, robot.contacts[foot].frame);
@@ -950,7 +1007,7 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   // //never gets called with such a t. Probably should clean up a bit.
 
   double t_phase = 1/args.cont[ARG_T_STEP]*( fmod( data.t, (args.cont[ARG_T_STEP]+args.cont[ARG_T_DWELL]))-args.cont[ARG_T_DWELL]  );
-  neutral_pos[2] = 0.075*(1-2*fabs(t_phase-0.5));
+  neutral_pos[2] = args.cont[ARG_H_STEP]*(1-2*fabs(t_phase-0.5));
 
   // std::cout << "neutral pos_x :" << neutral_pos[0] << std::endl;
   // std::cout << "neutral pos_y :" << neutral_pos[1] << std::endl;
@@ -979,6 +1036,28 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
 
   x_delta += x_delta_from_ang;
   y_delta += y_delta_from_ang;
+
+  // // Symmetric des_foot_pos
+  // if (data.last_phase == 1 && (foot == C_FR_EE || foot == C_BL_EE)) {
+  //   // Use x_delta & y_delta from (FL, RR)
+  //   x_delta = data.delta_group1[0];
+  //   y_delta = data.delta_group1[1];
+  // } else if (data.last_phase == 2 && (foot == C_FL_EE || foot == C_BR_EE)) {
+  //   // Use x_delta & y_delta from (FR, RL)
+  //   x_delta = data.delta_group2[0];
+  //   y_delta = data.delta_group2[1];
+  // }
+
+  // if (foot == C_FL_EE || foot == C_BR_EE) {
+  //     // FL, RR swing (phase 1)
+  //     data.delta_group1[0] = x_delta;
+  //     data.delta_group1[1] = y_delta;
+  // }
+  // if (foot == C_FR_EE || foot == C_BL_EE) {
+  //     // FR, RL swing (phase 2)
+  //     data.delta_group2[0] = x_delta;
+  //     data.delta_group2[1] = y_delta;
+  // }
   
   //CoM offset. TODO: pull from model
   //neutral_pos[0] += 0.012731/2;

@@ -101,7 +101,8 @@ void fill_tlm(Robot &robot, Telemetry *tlm) {
   tlm->feet_pos[0] = foot_pos_FL[0];
   tlm->feet_pos[1] = foot_pos_FL[1];
   tlm->feet_pos[2] = foot_pos_FL[2];
-  // std::cout<<"FL_x: "<< foot_pos_FL[0] <<std::endl;
+
+  std::cout<<"FL_z: "<< foot_pos_FL[2] <<std::endl;
   // std::cout<<"tlm_FL_z: "<< tlm->feet_pos[2] <<std::endl;
   
   tlm->feet_pos[3] = foot_pos_FR[0];

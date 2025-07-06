@@ -29,8 +29,8 @@ static const int num_constraints =   NUM_U /*input constraints*/
                                    + 3*4   /*contact constraints*/
                                    + 4*4+4 /*admissable force constraints*/;
 
-const double step_height = 0.075;//0.3
-const double step_time = 0.3;//0.3
+const double step_height = 0.075; //0.3
+const double step_time = 0.3; //0.3
 const double dwell_time = 0.5;
 
 typedef enum {
@@ -158,6 +158,7 @@ void init(const StateVec &q,
   int grf_var_offset = NUM_U+NUM_Q;
   for (int i = 0; i < NUM_C; ++i) {
     double mu = 0.75*robot.contacts[i].mu;
+    // std::cout << "current mu set: " << mu << std::endl;
     int fx_constr_l = addmis_force_offset+5*i;
     int fx_constr_u = addmis_force_offset+5*i+1;
     int fy_constr_l = addmis_force_offset+5*i+2;
@@ -226,6 +227,8 @@ void execute(const StateVec &q_in,
   StateVec q = q_in;
   q[Q_Z] = relative_z;
 
+  // std::cout<< "relative_z: " << relative_z << std::endl;
+
   data.t += CTRL_LOOP_DURATION;
   bool dwell;
   gait_state_machine(data, data.t, q, data.phase, dwell);
@@ -260,9 +263,9 @@ bool in_sroa_underestimate(const StateVec &q,
                            const ContactState c_s,
                            const Args &args,
                            const double delta_t) const {
-  if (!in_safe_set(q,qd,c_s,args,delta_t)) {
-    return false;
-  }
+  // if (!in_safe_set(q,qd,c_s,args,delta_t)) {
+  //   return false;
+  // }
   double relative_z = 0;
   bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
   if (fabs(relative_z - args.cont[ARG_H]) < 0.05) {
@@ -275,9 +278,9 @@ bool in_sroa_overestimate(const StateVec &q,
                           const ContactState c_s,
                           const Args &args,
                           const double delta_t) const {
-  if (!in_safe_set(q,qd,c_s,args,delta_t)) {
-    return false;
-  }
+  // if (!in_safe_set(q,qd,c_s,args,delta_t)) {
+  //   return false;
+  // }
   double relative_z = 0;
   bool relative_z_valid = contact_feet_relative_z(q, c_s, relative_z);
   if (fabs(relative_z - args.cont[ARG_H]) < 0.05) {
@@ -497,6 +500,7 @@ void compute_planar_body_err(const StateVec &q, const StateVec &qd, Contact swin
   }
 
   double margin_frac = 0.65;
+  // double margin_frac = 0.85;  
   for (int i = 0; i < 4; ++i) {
     support_foot_pos[i][0] = margin_frac*foot_pos[i][0] + (1-margin_frac)*support_centroid[0];
     support_foot_pos[i][1] = margin_frac*foot_pos[i][1] + (1-margin_frac)*support_centroid[1];
@@ -624,7 +628,7 @@ void swing_leg_setpoint(Data &data, Contact foot, const StateVec &q, double t, d
         neutral_frame = robot.contacts[foot].frame;
         break;
     }
-    q_neutral << q.head(3),0,0,q[Q_RZ],
+    q_neutral << q.head(3),0,0,q[Q_RZ],  // when robot's base is in neutral posture at the current position & orientation
                  0.1,0,0,
                 -0.1,0,0,
                  0.1,0,0,
@@ -633,9 +637,10 @@ void swing_leg_setpoint(Data &data, Contact foot, const StateVec &q, double t, d
 
     //memcpy(goal_pos, &foot_pos_init[foot][0], 2*sizeof(double));
 
-    //double foot_pos[3];
+    double foot_pos[3];
     //double foot_vel_des[3];
-    //fk(foot_pos, robot.contacts[foot].frame);
+    fk(q, foot_pos, robot.contacts[foot].frame);
+
     double r = sqrt((goal_pos[1]-q[Q_Y])*(goal_pos[1]-q[Q_Y])+
                     (goal_pos[0]-q[Q_X])*(goal_pos[0]-q[Q_X]));
 
@@ -644,17 +649,23 @@ void swing_leg_setpoint(Data &data, Contact foot, const StateVec &q, double t, d
     goal_pos[0] = q[Q_X] + r*cos(th);
     goal_pos[1] = q[Q_Y] + r*sin(th);
 
+    // Infeasible when Vx > 0.05 ... (because goal position is calculated as too far from the robot)
     goal_pos[0] += (args.cont[ARG_VX]*cos(q[Q_RZ]) - args.cont[ARG_VY]*sin(q[Q_RZ]))*4*(step_time+dwell_time);
     goal_pos[1] += (args.cont[ARG_VX]*sin(q[Q_RZ]) + args.cont[ARG_VY]*cos(q[Q_RZ]))*4*(step_time+dwell_time);
 
-    //printf("pos: %f goal: %f init:%f\n", q[Q_X], goal_pos[0],foot_pos_init[foot][0]);
-    if (goal_pos[0] > 0.25 && goal_pos[0] < 1) {
-      if (goal_pos[1] > 0) {
-        goal_pos[1] = fmax(0.26,goal_pos[1]);
-      } else {
-        goal_pos[1] = fmin(-0.26,goal_pos[1]);
-      }
-    }
+    // printf("pos: %f goal: %f init:%f\n", q[Q_X], goal_pos[0],foot_pos_init[foot][0]);
+    // printf("pos: %f goal: %f\n", q[Q_X], goal_pos[0]);
+
+    // if (goal_pos[0] > 0.25 && goal_pos[0] < 1) {
+    //   if (goal_pos[1] > 0) {
+    //     goal_pos[1] = fmax(0.26,goal_pos[1]);
+    //   } else {
+    //     goal_pos[1] = fmin(-0.26,goal_pos[1]);
+    //   }
+    // }
+
+    printf("foot_pos: [%.4f, %.4f, %.4f]\n", 
+       foot_pos[0], foot_pos[1], foot_pos[2]);
   }
   foot_prev = foot;
 
@@ -673,6 +684,9 @@ void swing_leg_setpoint(Data &data, Contact foot, const StateVec &q, double t, d
   }
 
   ik(robot.contacts[foot].frame, q, foot_pos_des, joint_des);
+
+  // printf("foot_pos_des: [%.4f, %.4f, %.4f]\n", 
+  //      foot_pos_des[0], foot_pos_des[1], foot_pos_des[2]);
 
 }
 
