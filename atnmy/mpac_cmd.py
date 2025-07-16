@@ -61,7 +61,7 @@ def walk_pd(gait=0):
   x.disc[0] = gait
   sock.sendto(bytes(x), (UDP_IP, CTRL_UDP_PORT))
    
-def walk_idqp(h=0.25, vx=0, vy=0, vrz=0, mu=0.7, t_step=0.25, h_step=0.075, t_dwell=0.05):
+def walk_idqp(h=0.25, vx=0, vy=0, vrz=0, mu=0.7, t_step=0.25, h_step=0.075, t_dwell=0.05, kp=np.ones(3)*200, kd=np.ones(3)*5):
   x = buff()
   x.mode = 8
   x.cont[0] = h
@@ -72,6 +72,11 @@ def walk_idqp(h=0.25, vx=0, vy=0, vrz=0, mu=0.7, t_step=0.25, h_step=0.075, t_dw
   x.cont[5] = t_step
   x.cont[6] = h_step
   x.cont[7] = t_dwell
+  # print("kp type:", type(kp), "shape:", np.shape(kp))
+  # print("x.cont type:", type(x.cont), "shape:", np.shape(x.cont))
+  for i in range(3):
+    x.cont[8 + i] = float(kp[i])
+    x.cont[11 + i] = float(kd[i])
   sock.sendto(bytes(x), (UDP_IP, CTRL_UDP_PORT))
    
 def walk_quasi_idqp(h=0.25, vx=0, vy=0, vrz=0):

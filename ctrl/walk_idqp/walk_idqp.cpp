@@ -19,6 +19,23 @@
 #include "ctrl/ctrl_utils/traj_gen.h"
 #include "ctrl_mode_class.h"
 
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+
+std::string now_string() {
+    using namespace std::chrono;
+    auto now = system_clock::now();
+    auto itt = system_clock::to_time_t(now);
+    auto tm = *localtime(&itt);
+
+    auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%F %T") << "." << std::setw(3) << std::setfill('0') << ms.count();
+    return oss.str();
+}
+
 
 extern Robot robot;
 
@@ -101,11 +118,6 @@ typedef struct {
   OsqpEigen::Solver solver;
 
   double mu_arg;
-
-  double delta_group1[2];   // x_delta, y_delta for FL&RR (phase 1)
-  double delta_group2[2];   // x_delta, y_delta for FR&RL (phase 2)
-  int last_phase; // 0 or 1
-
 } Data;
 
 class WalkIdqp: public PrimitiveBehavior {
@@ -321,9 +333,22 @@ void execute(const StateVec &q_in,
   StateVec q = q_in;
   StateVec q_dot = qd;
   q[Q_Z] = relative_z;
+  data.mu_arg = args.cont[ARG_MU];
 
-
-  // std::cout << "relative_z: " << relative_z << std::endl;
+  // std::cout << "args_h: " << args.cont[ARG_H] << std::endl;
+  // std::cout << "args_vx: " << args.cont[ARG_VX] << std::endl;
+  // std::cout << "args_vy: " << args.cont[ARG_VY] << std::endl;
+  // std::cout << "args_vrz: " << args.cont[ARG_VRZ] << std::endl;
+  // std::cout << "args_mu: " << args.cont[ARG_MU] << std::endl;
+  // std::cout << "args_tstep: " << args.cont[ARG_T_STEP] << std::endl;
+  // std::cout << "args_hstep: " << args.cont[ARG_H_STEP] << std::endl;
+  // std::cout << "args_tdwell: " << args.cont[ARG_T_DWELL] << std::endl;
+  // std::cout << "args_kp_hip: " << args.cont[ARG_kp_hip] << std::endl;
+  // std::cout << "args_kp_shoulder: " << args.cont[ARG_kp_shoulder] << std::endl;
+  // std::cout << "args_kp_knee: " << args.cont[ARG_kp_knee] << std::endl;
+  // std::cout << "args_kd_hip: " << args.cont[ARG_kd_hip] << std::endl;
+  // std::cout << "args_kd_shoulder: " << args.cont[ARG_kd_shoulder] << std::endl;
+  // std::cout << "args_kd_knee: " << args.cont[ARG_kd_knee] << std::endl;
 
 
   /* reset tlm */
@@ -361,7 +386,11 @@ void execute(const StateVec &q_in,
   StateVec qdd_sol;
   bool feasible = solve_idqp(data, q, qd, c_s, qdd_des, u_sol, qdd_sol);
   // std::cout<<"Feasibility: "<< feasible <<std::endl;
-  fill_act_cmds(data, act_cmds, feasible, q, qd, u_sol, qdd_sol);
+  fill_act_cmds(data, act_cmds, feasible, q, qd, u_sol, qdd_sol, args);
+
+  // std::cout<< "argument Vx: " << args.cont[ARG_VX] <<std::endl;
+  // std::cout<< "argument Kp hip: " << args.cont[ARG_kp_hip] <<std::endl;
+  // std::cout<< "argument Kd hip: " << args.cont[ARG_kd_hip] <<std::endl;
 
 
   // **** Data Export as TLM **** //
@@ -515,8 +544,6 @@ void setpoint(const StateVec &q_in,
   qd_des = VectorXd::Zero((int)NUM_Q);
   q_des[Q_Z] = args.cont[ARG_H];
   q_des[Q_RX] = 0;
-  q_des[Q_RY] = 0.04;
-  q_des[Q_RZ] = -0.07;
   qd_des[Q_X] = args.cont[ARG_VX]*cos(q[Q_RZ]) - args.cont[ARG_VY]*sin(q[Q_RZ]);
   qd_des[Q_Y] = args.cont[ARG_VX]*sin(q[Q_RZ]) + args.cont[ARG_VY]*cos(q[Q_RZ]);
   qd_des[Q_RZ] = args.cont[ARG_VRZ];
@@ -641,23 +668,53 @@ StateVec compute_body_qd_des(const StateVec &q,
                              const Args &args) {
   /* limit desired acceleration for smoothness */
   const int map_to_arg[3] = {ARG_VX, ARG_VY, ARG_VRZ};
-  for (int i = 0; i < 3; ++i) {
-    data.qd_arg_smoothed[i] = fmax(fmin(args.cont[map_to_arg[i]], data.qd_arg_smoothed[i]
-                                                                  +qdd_des_limit[i]*CTRL_LOOP_DURATION),
-                                                                  data.qd_arg_smoothed[i]
-                                                                  -qdd_des_limit[i]*CTRL_LOOP_DURATION);
-    data.qd_arg_smoothed[i] = fmax(fmin(data.qd_arg_smoothed[i], qd_des_limit[i]),
-                                                                -qd_des_limit[i]);
-  }
-  StateVec qd_des = VectorXd::Zero(NUM_Q);
-  qd_des[Q_X] = data.qd_arg_smoothed[0]*cos(q[Q_RZ]) - data.qd_arg_smoothed[1]*sin(q[Q_RZ]);
-  qd_des[Q_Y] = data.qd_arg_smoothed[0]*sin(q[Q_RZ]) + data.qd_arg_smoothed[1]*cos(q[Q_RZ]);
-  qd_des[Q_RZ] = data.qd_arg_smoothed[2];
-  //qd_des[Q_X] = args.cont[ARG_VX]*cos(q[Q_RZ]) - args.cont[ARG_VY]*sin(q[Q_RZ]);
-  //qd_des[Q_Y] = args.cont[ARG_VX]*sin(q[Q_RZ]) + args.cont[ARG_VY]*cos(q[Q_RZ]);
-  //qd_des[Q_RZ] = args.cont[ARG_VRZ];
+  // for (int i = 0; i < 3; ++i) {
+  //   data.qd_arg_smoothed[i] = fmax(fmin(args.cont[map_to_arg[i]], data.qd_arg_smoothed[i]
+  //                                                                 +qdd_des_limit[i]*CTRL_LOOP_DURATION),
+  //                                                                 data.qd_arg_smoothed[i]
+  //                                                                 -qdd_des_limit[i]*CTRL_LOOP_DURATION);
+  //   data.qd_arg_smoothed[i] = fmax(fmin(data.qd_arg_smoothed[i], qd_des_limit[i]),
+  //                                                               -qd_des_limit[i]);
+  // }
+  // StateVec qd_des = VectorXd::Zero(NUM_Q);
+  // qd_des[Q_X] = data.qd_arg_smoothed[0]*cos(q[Q_RZ]) - data.qd_arg_smoothed[1]*sin(q[Q_RZ]);
+  // qd_des[Q_Y] = data.qd_arg_smoothed[0]*sin(q[Q_RZ]) + data.qd_arg_smoothed[1]*cos(q[Q_RZ]);
+  // qd_des[Q_RZ] = data.qd_arg_smoothed[2];
+  // //qd_des[Q_X] = args.cont[ARG_VX]*cos(q[Q_RZ]) - args.cont[ARG_VY]*sin(q[Q_RZ]);
+  // //qd_des[Q_Y] = args.cont[ARG_VX]*sin(q[Q_RZ]) + args.cont[ARG_VY]*cos(q[Q_RZ]);
+  // //qd_des[Q_RZ] = args.cont[ARG_VRZ];
 
-  return qd_des;
+  for (int i = 0; i < 3; ++i) {
+    double prev = data.qd_arg_smoothed[i];
+
+    // 1st - qdd limit
+    double limited = fmax(fmin(args.cont[map_to_arg[i]], prev + qdd_des_limit[i] * CTRL_LOOP_DURATION),
+                          prev - qdd_des_limit[i] * CTRL_LOOP_DURATION);
+    if (limited != args.cont[map_to_arg[i]]) {
+        std::cout << "[" << now_string() << "] [CLIP] qd_arg_smoothed[" << i << "] qdd limit: "
+                  << args.cont[map_to_arg[i]] << " → " << limited << std::endl;
+    }
+
+    // 2nd - qd limit
+    double clipped = fmax(fmin(limited, qd_des_limit[i]), -qd_des_limit[i]);
+    if (clipped != limited) {
+        if (clipped > qd_des_limit[i])
+            std::cout << "[" << now_string() << "] [CLIP] qd_arg_smoothed[" << i << "] qd upper limit: "
+                      << limited << " → " << clipped << std::endl;
+        else if (clipped < -qd_des_limit[i])
+            std::cout << "[" << now_string() << "] [CLIP] qd_arg_smoothed[" << i << "] qd lower limit: "
+                      << limited << " → " << clipped << std::endl;
+    }
+
+    data.qd_arg_smoothed[i] = clipped;
+  }
+
+  StateVec qd_des = VectorXd::Zero(NUM_Q);
+    qd_des[Q_X] = data.qd_arg_smoothed[0]*cos(q[Q_RZ]) - data.qd_arg_smoothed[1]*sin(q[Q_RZ]);
+    qd_des[Q_Y] = data.qd_arg_smoothed[0]*sin(q[Q_RZ]) + data.qd_arg_smoothed[1]*cos(q[Q_RZ]);
+    qd_des[Q_RZ] = data.qd_arg_smoothed[2];
+
+    return qd_des;
 }
 
 StateVec compute_body_qdd_des(const StateVec &q,
@@ -671,8 +728,25 @@ StateVec compute_body_qdd_des(const StateVec &q,
   data.i_err[0] += Ki*(qd_des[Q_X] - qd[Q_X]);
   data.i_err[1] += Ki*(qd_des[Q_Y] - qd[Q_Y]);
 
+  double clipped_i_err_x = data.i_err[0];
+  double clipped_i_err_y = data.i_err[1];
+
   data.i_err[0] = fmin(antiwindup_x, fmax(-antiwindup_x, data.i_err[0]));
   data.i_err[1] = fmin(antiwindup_y, fmax(-antiwindup_y, data.i_err[1]));
+
+  // // print if clipping has occurred or not
+  // if (clipped_i_err_x != data.i_err[0]) {
+  //     if (clipped_i_err_x > antiwindup_x)
+  //         std::cout << "[" << now_string() << "] [CLIP] i_err[0] (x) upper limit: " << clipped_i_err_x << " → " << data.i_err[0] << std::endl;
+  //     else if (clipped_i_err_x < -antiwindup_x)
+  //         std::cout << "[" << now_string() << "] [CLIP] i_err[0] (x) lower limit: " << clipped_i_err_x << " → " << data.i_err[0] << std::endl;
+  // }
+  // if (clipped_i_err_y != data.i_err[1]) {
+  //     if (clipped_i_err_y > antiwindup_y)
+  //         std::cout << "[" << now_string() << "] [CLIP] i_err[1] (y) upper limit: " << clipped_i_err_y << " → " << data.i_err[1] << std::endl;
+  //     else if (clipped_i_err_y < -antiwindup_y)
+  //         std::cout << "[" << now_string() << "] [CLIP] i_err[1] (y) lower limit: " << clipped_i_err_y << " → " << data.i_err[1] << std::endl;
+  // }
 
   Vector3d e_diff = orientation_diff_from_euler(q.segment<3>(Q_RX), q_des.segment<3>(Q_RX));
 
@@ -687,7 +761,7 @@ StateVec compute_body_qdd_des(const StateVec &q,
            VectorXd::Zero(NUM_U);
 
   //TODO i dont think this is correct
-  qd_err << qd.head(6) - qd_des.head(6), 
+  qd_err << qd.head(6) - qd_des.head(6),
             VectorXd::Zero(NUM_U);
   
   return data.Kp*(q_err) + data.Kd*(qd_err);
@@ -705,16 +779,28 @@ StateVec update_qd_filter(const StateVec &qd) {
 }
 
 bool add_noise = false;
+// bool saturation = true;
 
-void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, const StateVec &q, const StateVec &qd, const InputVec &u_sol, const StateVec &qdd_sol) {
+void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, const StateVec &q, const StateVec &qd, const InputVec &u_sol, const StateVec &qdd_sol, const Args &args) {
+  const int map_to_gains[6] = { ARG_kp_hip,  ARG_kp_shoulder,  ARG_kp_knee,
+                                ARG_kd_hip,  ARG_kd_shoulder,  ARG_kd_knee  };
   if (feasible) {
     double gamma = 0.5;
     InputVec qd_fuse = (1-gamma)*qd.tail(NUM_U) + gamma*data.qd_cmd_prev;
+    
     for (int i = 0; i < NUM_U; ++i) {
       act_cmds.mode[i] = CMD_MODE_TAU_VEL_POS;
+      // if (saturation) {
+      //   act_cmds.u[i] = std::tanh( u_sol[i] / 20 ) * 20;
+      // }
+      // else {
+        // act_cmds.u[i] = u_sol[i];
+      // }
       act_cmds.u[i] = u_sol[i];
+      
       act_cmds.qd[i] = qd_fuse[i] + CTRL_LOOP_DURATION*(qdd_sol[i+Q_FL1]);
       act_cmds.q[i] = q[i+Q_FL1] + CTRL_LOOP_DURATION*qd_fuse[i]+0.5*CTRL_LOOP_DURATION*CTRL_LOOP_DURATION*(qdd_sol[i+Q_FL1]);
+      
       if (add_noise) {
         // """
         // ADD NOISE
@@ -734,9 +820,13 @@ void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, cons
         }
         std::cout << "act_cmds.q(after) : " << act_cmds.q << std::endl;
       }
-      act_cmds.kp[i] = 200;
-      act_cmds.kd[i] = 5;
+
+      // act_cmds.kp[i] = 200;
+      // act_cmds.kd[i] = 5;
+      act_cmds.kp[i] = args.cont[ map_to_gains[ (i % 3) ] ];
+      act_cmds.kd[i] = args.cont[ map_to_gains[ (i % 3) + 3 ] ];
     }
+
     data.qd_cmd_prev = act_cmds.qd;
 
     for (int i = 0; i < NUM_C; ++i) {
@@ -746,8 +836,8 @@ void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, cons
           act_cmds.u[3*i+j] = u_sol[3*i+j];
           act_cmds.qd[3*i+j] = data.swing_leg_qd_des[i][j];
           act_cmds.q[3*i+j] =  data.swing_leg_q_des[i][j];
-          act_cmds.kp[3*i+j] = 200;
-          act_cmds.kd[3*i+j] = 5;
+          act_cmds.kp[3*i+j] = args.cont[ map_to_gains[ j ] ];
+          act_cmds.kd[3*i+j] = args.cont[ map_to_gains[ j + 3 ] ];
         }
       }
     }
@@ -757,8 +847,8 @@ void fill_act_cmds(Data &data, ActuatorCmds &act_cmds, const bool feasible, cons
       act_cmds.u[i] = 0;
       act_cmds.qd[i] = 0;
       act_cmds.q[i] = 0;
-      act_cmds.kp[i] = 200;
-      act_cmds.kd[i] = 5;
+      act_cmds.kp[i] = args.cont[ map_to_gains[ (i % 3) ] ];
+      act_cmds.kd[i] = args.cont[ map_to_gains[ (i % 3) + 3 ] ];
     }
     data.qd_cmd_prev = act_cmds.qd;
   }
@@ -1065,7 +1155,7 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
   
   bool Add_foot_pos_noise = false;
 
-  double sigma = 0.1;
+  double sigma = 0.05;
   std::random_device rd;
   std::mt19937 gen(rd());
   std::normal_distribution<> dist(0, sigma);
@@ -1075,9 +1165,9 @@ void compute_swing_leg_joint_des(Data &data, Contact foot, const StateVec &q, co
     double dx = dist(gen);
     double dy = dist(gen);
     double dz = dist(gen);
-    std::cout << "dx : " << dx << std::endl;
-    std::cout << "dy : " << dy << std::endl;
-    std::cout << "dz : " << dz << std::endl;
+    // std::cout << "dx : " << dx << std::endl;
+    // std::cout << "dy : " << dy << std::endl;
+    // std::cout << "dz : " << dz << std::endl;
 
     goal_pos[0] = neutral_pos[0] + x_delta + dx;
     goal_pos[1] = neutral_pos[1] + y_delta + dy;
